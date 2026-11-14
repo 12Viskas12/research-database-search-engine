@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Поиск по данным</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <h1>Поиск по данным</h1>
+
+    <section>
+      <h2>Загрузка файла</h2>
+      <form id="upload-form">
+        <input type="file" id="file" accept=".csv,.xlsx,.xml" required>
+        <button type="submit">Загрузить</button>
+      </form>
+      <ul id="files"></ul>
+    </section>
+
+    <section>
+      <h2>Поиск</h2>
+      <form id="search-form">
+        <input type="search" id="query" placeholder="Запрос" required>
+        <button type="submit">Найти</button>
+      </form>
+      <div id="results"></div>
+    </section>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
