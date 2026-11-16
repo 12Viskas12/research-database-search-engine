@@ -5,11 +5,22 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-8b5cf6?style=flat-square&logo=postgresql&logoColor=white)
 ![Docker](https://img.shields.io/badge/Docker-Compose-8b5cf6?style=flat-square&logo=docker&logoColor=white)
 
-Upload CSV, XLSX or XML files and search through them from a web page, a REST API or a Telegram bot.
+Upload data files and search through them from a web page, a REST API or a Telegram bot.
+
+## Formats
+
+| Type | Extensions |
+| --- | --- |
+| Tables | `csv` `tsv` `xlsx` `xlsm` `xls` `ods` |
+| Structured | `json` `jsonl` `ndjson` `xml` `sql` |
+| Documents | `pdf` `docx` `html` `htm` |
+| Text | `txt` `log` `md` `dat` and any other text file |
+
+SQL dumps are read from `INSERT` and `COPY` statements.
 
 ## Features
 
-- Upload `.csv`, `.xlsx` and `.xml` files
+- Upload files in many formats, the type is detected automatically
 - Automatic cleaning: HTML tags, duplicates, empty rows and columns, column names
 - Background processing with a progress bar
 - Full-text search with a partial match fallback
@@ -81,7 +92,7 @@ Send any text to the bot and it replies with the five best matches.
 app/
   core/        settings, Redis
   db/          connection pool, schema
-  parsers/     csv, xlsx, xml
+  parsers/     one parser per format
   routers/     files, search, pages
   services/    cleaner, ingestion, search
   static/      css, js
