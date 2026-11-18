@@ -8,30 +8,93 @@
 </head>
 <body>
   <main>
-    <h1>Поиск по данным</h1>
-
-    <section>
-      <h2>Загрузка файла</h2>
-      <form id="upload-form">
-        <input type="file" id="file" required>
-        <button type="submit">Загрузить</button>
-      </form>
-      <div class="toolbar">
-        <button type="button" id="merge-all" class="link">Объединить все в одну</button>
-        <button type="button" id="reclaim" class="link">Освободить место</button>
+    <header class="top">
+      <h1>Поиск по данным</h1>
+      <div id="me" class="me" hidden>
+        <div class="me-main">
+          <span id="me-name" class="me-name"></span>
+          <span id="me-role" class="badge"></span>
+          <button type="button" id="logout" class="link">Выйти</button>
+        </div>
+        <div id="me-rank" class="me-rank"></div>
       </div>
-      <p id="stats" class="muted"></p>
-      <ul id="files"></ul>
+    </header>
+
+    <section id="auth" hidden>
+      <div class="tabs">
+        <button type="button" class="tab active" data-auth="login">Вход</button>
+        <button type="button" class="tab" data-auth="register">Регистрация</button>
+      </div>
+      <form id="login-form" class="stack">
+        <input type="text" id="login-name" placeholder="Логин" autocomplete="username" required>
+        <input type="password" id="login-pass" placeholder="Пароль" autocomplete="current-password" required>
+        <button type="submit">Войти</button>
+      </form>
+      <form id="register-form" class="stack" hidden>
+        <input type="text" id="reg-token" placeholder="Токен: XXXX-XXXX-XXXX" autocomplete="off" required>
+        <input type="text" id="reg-name" placeholder="Придумайте логин" autocomplete="username" required>
+        <input type="password" id="reg-pass" placeholder="Пароль, от 8 символов" autocomplete="new-password" required>
+        <button type="submit">Создать аккаунт</button>
+      </form>
+      <p class="muted">Токен выдает админ. Запросить доступ можно в Telegram-боте командой /request.</p>
     </section>
 
-    <section>
-      <h2>Поиск</h2>
-      <form id="search-form">
-        <input type="search" id="query" placeholder="Запрос" required>
-        <button type="submit">Найти</button>
-      </form>
-      <div id="results"></div>
-    </section>
+    <div id="app" hidden>
+      <nav id="nav" class="tabs" hidden></nav>
+
+      <section data-tab="search">
+        <h2>Поиск</h2>
+        <div class="quota">
+          <div id="quota-text" class="quota-text"></div>
+          <div class="bar"><div id="quota-fill" class="bar-fill"></div></div>
+        </div>
+        <form id="search-form">
+          <input type="search" id="query" placeholder="Запрос" required>
+          <button type="submit">Найти</button>
+          <button type="button" id="lucky" class="ghost">Мне повезет</button>
+        </form>
+        <div id="results"></div>
+      </section>
+
+      <section data-tab="files" hidden>
+        <h2>Загрузка файла</h2>
+        <form id="upload-form">
+          <input type="file" id="file" required>
+          <button type="submit">Загрузить</button>
+        </form>
+        <div class="toolbar">
+          <button type="button" id="merge-all" class="link">Объединить все в одну</button>
+          <button type="button" id="reclaim" class="link">Освободить место</button>
+        </div>
+        <p id="stats" class="muted"></p>
+        <ul id="files"></ul>
+      </section>
+
+      <section data-tab="requests" hidden>
+        <h2>Заявки из бота</h2>
+        <ul id="requests" class="rows"></ul>
+      </section>
+
+      <section data-tab="invites" hidden>
+        <h2>Токены регистрации</h2>
+        <form id="invite-form">
+          <select id="invite-role">
+            <option value="user">Обычный</option>
+            <option value="vip">VIP</option>
+            <option value="admin">Админ</option>
+          </select>
+          <input type="text" id="invite-note" placeholder="Заметка, например имя" maxlength="200">
+          <button type="submit">Создать токен</button>
+        </form>
+        <div id="new-token" class="token-box" hidden></div>
+        <ul id="invites" class="rows"></ul>
+      </section>
+
+      <section data-tab="users" hidden>
+        <h2>Пользователи</h2>
+        <ul id="users" class="rows"></ul>
+      </section>
+    </div>
   </main>
   <script src="/static/app.js"></script>
 </body>

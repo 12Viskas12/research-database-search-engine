@@ -1,13 +1,14 @@
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
+from app.core.deps import admin_user
 from app.core.redis_client import get_redis
 from app.db import database
 from app.services import compression_service as cs
 
-router = APIRouter(prefix="/api/compress")
+router = APIRouter(prefix="/api/compress", dependencies=[Depends(admin_user)])
 
 
 class MergeBody(BaseModel):
