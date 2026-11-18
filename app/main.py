@@ -6,7 +6,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.core.redis_client import close_redis
 from app.db import database
-from app.routers import files, pages, search
+from app.routers import compress, files, pages, search
 
 
 @asynccontextmanager
@@ -25,4 +25,5 @@ app.mount(
 )
 app.include_router(pages.router)
 app.include_router(files.router)
+app.include_router(compress.router)
 app.include_router(search.router)
