@@ -1,4 +1,5 @@
 from app.db import database
+from app.services import compression_service
 
 FTS_SQL = """
 SELECT r.id, r.file_id, r.data
@@ -26,8 +27,15 @@ async def search(query, limit=20, offset=0):
     query = query.strip()
     if not query:
         return []
-    pool = database.get_pool()
-    rows = await pool.fetch(FTS_SQL, query, limit, offset)
-    if not rows:
-        rows = await pool.fetch(LIKE_SQL, _like_pattern(query), limit, offset)
-    return [dict(r) for r in rows]
+    need = offset + limit
+    async with database.get_pool().acquire() as conn:
+        async with conn.transaction(isolation="repeatable_read", readonly=True):
+            rows = await conn.fetch(FTS_SQL, query, need, 0)
+            if not rows:
+                rows = await conn.fetch(LIKE_SQL, _like_pattern(query), need, 0)
+            items = [dict(r) for r in rows]
+            if len(items) < need:
+                items += await compression_service.search_packed(
+                    conn, query, need - len(items)
+                )
+    return items[offset : offset + limit]

@@ -43,7 +43,7 @@ async def close_pool():
         _pool = None
 
 
-async def create_file(name, path):
+async def create_file(name, path=""):
     return await _pool.fetchval(
         "INSERT INTO files (name, path) VALUES ($1, $2) RETURNING id", name, path
     )
@@ -56,8 +56,8 @@ async def get_file(file_id):
 
 async def list_files():
     rows = await _pool.fetch(
-        "SELECT id, name, status, rows_count, progress, error, created_at "
-        "FROM files ORDER BY id DESC"
+        "SELECT id, name, status, rows_count, progress, packed, raw_bytes, "
+        "packed_bytes, error, created_at FROM files ORDER BY id DESC"
     )
     return [dict(r) for r in rows]
 
@@ -67,7 +67,8 @@ async def set_file_status(file_id, status, rows_count=None, error=None):
         "UPDATE files SET status = $2::text, rows_count = COALESCE($3, rows_count), "
         "error = $4, "
         "progress = CASE WHEN $2::text = 'done' THEN 100 "
-        "WHEN $2::text = 'processing' THEN 0 ELSE progress END "
+        "WHEN $2::text IN ('processing', 'packing', 'unpacking') THEN 0 "
+        "ELSE progress END "
         "WHERE id = $1",
         file_id,
         status,

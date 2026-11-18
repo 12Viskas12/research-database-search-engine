@@ -24,6 +24,7 @@ SQL dumps are read from `INSERT` and `COPY` statements.
 - Automatic cleaning: HTML tags, duplicates, empty rows and columns, column names
 - Background processing with a progress bar
 - Full-text search with a partial match fallback
+- Compression of single files or all files merged into one, search keeps working
 - Web interface, REST API and Telegram bot
 
 ## Stack
@@ -67,6 +68,11 @@ Settings are read from `.env`.
 | `GET` | `/api/files` | List files with status and progress |
 | `GET` | `/api/files/{id}` | Get one file |
 | `GET` | `/api/search?q=text&limit=20&offset=0` | Search records |
+| `POST` | `/api/compress/files/{id}/pack?method=bz2` | Compress one file |
+| `POST` | `/api/compress/files/{id}/unpack` | Restore a compressed file |
+| `POST` | `/api/compress/merge` | Merge files into one compressed file |
+| `POST` | `/api/compress/reclaim` | Free disk space after compression |
+| `GET` | `/api/compress/stats` | Sizes before and after |
 
 Example:
 
@@ -74,6 +80,18 @@ Example:
 curl -F "file=@data.csv" localhost:8000/api/files
 curl "localhost:8000/api/search?q=Kyiv"
 ```
+
+## Compression
+
+Rows are packed into blocks of 2000 and compressed with `bz2`, `zlib` or `lzma`. Every block has a small Bloom filter of its words, so search skips blocks that cannot match and unpacks only the rest. Results come from live and compressed files together.
+
+```bash
+curl -X POST "localhost:8000/api/compress/files/1/pack?method=bz2"
+curl -X POST localhost:8000/api/compress/merge -H "Content-Type: application/json" -d '{"name": "all"}'
+curl -X POST localhost:8000/api/compress/reclaim
+```
+
+Merge replaces the source files with one file, each row keeps its `source_file`. Disk space is returned after `reclaim`, which briefly locks the tables.
 
 ## Telegram bot
 
