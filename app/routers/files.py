@@ -3,14 +3,15 @@ import re
 import uuid
 
 import aiofiles
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from app.core.config import settings
+from app.core.deps import admin_user
 from app.core.redis_client import get_redis
 from app.db import database
 from app.parsers.factory import get_parser
 
-router = APIRouter(prefix="/api/files")
+router = APIRouter(prefix="/api/files", dependencies=[Depends(admin_user)])
 
 
 @router.post("", status_code=201)

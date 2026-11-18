@@ -23,7 +23,9 @@ services:
 
   app:
     build: .
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "8000:8000"
     volumes:
@@ -37,7 +39,9 @@ services:
   worker:
     build: .
     command: arq workers.worker.WorkerSettings
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - uploads:/data/uploads
     depends_on:
@@ -49,7 +53,10 @@ services:
   bot:
     build: .
     command: python -m bot.main
-    env_file: .env
+    profiles: ["bot"]
+    env_file:
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy
