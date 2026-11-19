@@ -1,5 +1,6 @@
 import asyncio
 import bz2
+import functools
 import hashlib
 import json
 import lzma
@@ -27,7 +28,8 @@ INSERT_BLOCK = (
 LIVE_ROWS = "SELECT data FROM records WHERE file_id = $1 ORDER BY id"
 PACKED_ROWS = "SELECT codec, payload FROM blocks WHERE file_id = $1 ORDER BY block_no"
 SEARCH_BLOCKS = (
-    "SELECT file_id, block_no, codec, bloom, payload FROM blocks ORDER BY file_id, block_no"
+    "SELECT file_id, block_no, codec, bloom, payload FROM blocks "
+    "WHERE ($1::int[] IS NULL OR file_id = ANY($1)) ORDER BY file_id, block_no"
 )
 SOURCES = (
     "SELECT id, name, packed, status, rows_count FROM files "
@@ -82,10 +84,14 @@ def approx_size(row):
     return sum(len(v) for v in row.values() if isinstance(v, str)) + 16 * len(row)
 
 
-def bloom_positions(token, bits):
+@functools.lru_cache(maxsize=65536)
+def token_hashes(token):
     digest = hashlib.blake2b(token.encode("utf-8"), digest_size=16).digest()
-    h1 = int.from_bytes(digest[:8], "big")
-    h2 = int.from_bytes(digest[8:], "big") | 1
+    return int.from_bytes(digest[:8], "big"), int.from_bytes(digest[8:], "big") | 1
+
+
+def bloom_positions(token, bits):
+    h1, h2 = token_hashes(token)
     return [(h1 + i * h2) % bits for i in range(BLOOM_HASHES)]
 
 
@@ -98,13 +104,23 @@ def bloom_build(tokens):
     return bytes(data)
 
 
-def bloom_all(bloom, terms):
+def bloom_has(bloom, token):
     bits = len(bloom) * 8
-    return all(
-        bloom[pos >> 3] >> (pos & 7) & 1
-        for term in terms
-        for pos in bloom_positions(term, bits)
-    )
+    return all(bloom[pos >> 3] >> (pos & 7) & 1 for pos in bloom_positions(token, bits))
+
+
+def bloom_all(bloom, terms):
+    return all(bloom_has(bloom, term) for term in terms)
+
+
+def bloom_accepts(bloom, spec):
+    groups = spec.get("groups")
+    if spec["mode"] not in ("all", "min") or not groups:
+        return True
+    hit = sum(1 for group in groups if any(bloom_has(bloom, w) for w in group))
+    if spec["mode"] == "all":
+        return hit == len(groups)
+    return hit >= spec["min"]
 
 
 def encode_block(rows, codec):
@@ -126,15 +142,37 @@ def decode_block(payload, codec):
     return [json.loads(line) for line in raw.split("\n")] if raw else []
 
 
-def scan_block(payload, codec, terms, needle):
-    wanted = set(terms) if terms else None
+def row_matches_filters(row, filters):
+    for key, value in filters:
+        if not any(
+            k.lower() == key and isinstance(v, str) and value in v.lower()
+            for k, v in row.items()
+        ):
+            return False
+    return True
+
+
+def scan_block(payload, codec, spec):
+    mode = spec["mode"]
+    groups = spec.get("groups") or []
+    needle = spec.get("needle")
+    filters = spec.get("filters") or []
     found = []
     for i, row in enumerate(decode_block(payload, codec)):
+        if filters and not row_matches_filters(row, filters):
+            continue
+        if mode == "filter":
+            found.append((i, row))
+            continue
         text = row_text(row)
-        if wanted is not None:
-            if wanted <= words(text):
+        if mode == "like":
+            if needle in text.lower():
                 found.append((i, row))
-        elif needle in text.lower():
+            continue
+        present = words(text)
+        hit = sum(1 for group in groups if not present.isdisjoint(group))
+        enough = hit == len(groups) if mode == "all" else hit >= spec["min"]
+        if enough:
             found.append((i, row))
     return found
 
@@ -304,25 +342,13 @@ async def merge_files(target_id, source_ids, method="bz2"):
         raise
 
 
-async def search_packed(conn, query, limit):
-    terms = sorted(words(query))
-    if terms:
-        hits = await scan(conn, limit, terms, None)
-        if hits:
-            return hits
-    needle = query.strip().lower()
-    if not needle:
-        return []
-    return await scan(conn, limit, None, needle)
-
-
-async def scan(conn, limit, terms, needle):
+async def search_packed(conn, spec, files, limit):
     hits = []
-    async for block in conn.cursor(SEARCH_BLOCKS, prefetch=4):
-        if terms and not bloom_all(block["bloom"], terms):
+    async for block in conn.cursor(SEARCH_BLOCKS, files or None, prefetch=4):
+        if not bloom_accepts(block["bloom"], spec):
             continue
         found = await asyncio.to_thread(
-            scan_block, block["payload"], block["codec"], terms, needle
+            scan_block, block["payload"], block["codec"], spec
         )
         for i, row in found:
             hits.append(

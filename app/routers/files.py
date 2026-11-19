@@ -9,13 +9,14 @@ from app.core.config import settings
 from app.core.deps import admin_user
 from app.core.redis_client import get_redis
 from app.db import database
+from app.services import audit_service
 from app.parsers.factory import get_parser
 
 router = APIRouter(prefix="/api/files", dependencies=[Depends(admin_user)])
 
 
 @router.post("", status_code=201)
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), admin=Depends(admin_user)):
     ext = os.path.splitext(file.filename or "")[1].lower()
     if not re.fullmatch(r"\.[a-z0-9]{1,8}", ext):
         ext = ""
@@ -32,6 +33,7 @@ async def upload(file: UploadFile = File(...)):
     file_id = await database.create_file(file.filename, path)
     redis = await get_redis()
     await redis.enqueue_job("process_file", file_id)
+    await audit_service.log(admin, "file_uploaded", file=file_id, name=file.filename)
     return {"id": file_id, "status": "pending"}
 
 

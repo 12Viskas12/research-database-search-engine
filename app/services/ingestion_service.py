@@ -3,6 +3,7 @@ import asyncio
 import pandas as pd
 
 from app.db import database
+from app.services import vocab_service
 from app.services.cleaner import clean_dataframe
 
 BATCH = 1000
@@ -33,4 +34,5 @@ async def ingest(file_id, rows):
                 await database.set_file_progress(
                     file_id, min(99, (i + BATCH) * 100 // total)
                 )
+    await vocab_service.add_texts([r[2] for r in records])
     return total

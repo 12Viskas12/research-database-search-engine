@@ -1,6 +1,16 @@
+from arq import cron
+
 from app.core.redis_client import redis_settings
 from app.db import database
-from workers.tasks import merge_files, pack_file, process_file, reclaim_space, unpack_file
+from workers.tasks import (
+    autopack_files,
+    merge_files,
+    pack_file,
+    process_file,
+    rebuild_vocab,
+    reclaim_space,
+    unpack_file,
+)
 
 
 async def startup(ctx):
@@ -12,7 +22,15 @@ async def shutdown(ctx):
 
 
 class WorkerSettings:
-    functions = [process_file, pack_file, unpack_file, merge_files, reclaim_space]
+    functions = [
+        process_file,
+        pack_file,
+        unpack_file,
+        merge_files,
+        reclaim_space,
+        rebuild_vocab,
+    ]
+    cron_jobs = [cron(autopack_files, minute={0, 10, 20, 30, 40, 50}, timeout=7200)]
     redis_settings = redis_settings()
     on_startup = startup
     on_shutdown = shutdown
