@@ -4,11 +4,11 @@ import hashlib
 import hmac
 import re
 import secrets
-import time
 
 import asyncpg
 
 from app.core.config import settings
+from app.core.redis_client import get_redis
 from app.db import database
 
 ROLES = ("user", "vip", "admin")
@@ -25,12 +25,19 @@ RANKS = (
 )
 WINDOW = 600
 MAX_FAILS = 8
-ATTEMPTS = {}
+MAX_IP_FAILS = 40
+MAX_DAYS = 3650
 
 TODAY_SQL = "(now() AT TIME ZONE 'UTC')::date"
+ROLE_SQL = (
+    "CASE WHEN u.role = 'vip' AND u.role_until <= now() THEN 'user' ELSE u.role END"
+)
+USER_COLS = f"u.id, u.username, {ROLE_SQL} AS role, u.role_until, u.tg_id"
 CREATE_USER = (
-    "INSERT INTO users (username, pass_hash, role, tg_id) VALUES ($1, $2, $3, $4) "
-    "RETURNING id, username, role, tg_id"
+    "INSERT INTO users AS u (username, pass_hash, role, tg_id, role_until) "
+    "VALUES ($1, $2, $3, $4, CASE WHEN $5::int IS NULL THEN NULL "
+    "ELSE now() + make_interval(days => $5::int) END) "
+    f"RETURNING {USER_COLS}"
 )
 UPSERT_ADMIN = (
     "INSERT INTO users (username, pass_hash, role) VALUES ($1, $2, 'admin') "
@@ -38,13 +45,29 @@ UPSERT_ADMIN = (
     "RETURNING id, (xmax = 0) AS created"
 )
 USER_BY_NAME = (
-    "SELECT id, username, pass_hash, role, tg_id FROM users WHERE lower(username) = lower($1)"
+    f"SELECT {USER_COLS}, u.pass_hash FROM users u WHERE lower(u.username) = lower($1)"
 )
 USER_BY_SESSION = (
-    "SELECT u.id, u.username, u.role, u.tg_id FROM sessions s JOIN users u ON u.id = s.user_id "
+    f"SELECT {USER_COLS} FROM sessions s JOIN users u ON u.id = s.user_id "
     "WHERE s.token_hash = $1 AND s.expires_at > now()"
 )
-USER_BY_TG = "SELECT id, username, role, tg_id FROM users WHERE tg_id = $1"
+USER_BY_TG = f"SELECT {USER_COLS} FROM users u WHERE u.tg_id = $1"
+USER_PASS = "SELECT pass_hash FROM users WHERE id = $1"
+SET_PASS = "UPDATE users SET pass_hash = $2 WHERE id = $1"
+DROP_OTHER_SESSIONS = "DELETE FROM sessions WHERE user_id = $1 AND token_hash <> $2"
+DROP_USER_SESSIONS = "DELETE FROM sessions WHERE user_id = $1"
+NEW_LINK = "INSERT INTO tg_links (code, user_id, expires_at) VALUES ($1, $2, now() + interval '10 minutes')"
+DROP_LINKS = "DELETE FROM tg_links WHERE user_id = $1 OR expires_at < now()"
+CLAIM_LINK = "DELETE FROM tg_links WHERE code = $1 AND expires_at > now() RETURNING user_id"
+SET_TG = "UPDATE users SET tg_id = $2 WHERE id = $1"
+ADMIN_TGS = (
+    "SELECT tg_id FROM users WHERE role = 'admin' AND tg_id IS NOT NULL"
+)
+PENDING_FOR_ADMINS = (
+    "SELECT id, tg_id, tg_username, message FROM access_requests "
+    "WHERE status = 'pending' AND NOT admin_notified ORDER BY id LIMIT 20"
+)
+MARK_ADMIN_NOTIFIED = "UPDATE access_requests SET admin_notified = TRUE WHERE id = $1"
 NEW_SESSION = (
     "INSERT INTO sessions (token_hash, user_id, expires_at) "
     "VALUES ($1, $2, now() + make_interval(days => $3))"
@@ -53,16 +76,16 @@ DROP_SESSION = "DELETE FROM sessions WHERE token_hash = $1"
 DROP_EXPIRED = "DELETE FROM sessions WHERE expires_at < now()"
 CLAIM_INVITE = (
     "UPDATE invites SET used_at = now() WHERE token = $1 AND used_at IS NULL "
-    "AND expires_at > now() RETURNING id, role, tg_id"
+    "AND expires_at > now() RETURNING id, role, tg_id, role_days"
 )
 LINK_INVITE = "UPDATE invites SET used_by = $2 WHERE id = $1"
 NEW_INVITE = (
-    "INSERT INTO invites (token, role, tg_id, note, created_by, expires_at) "
-    "VALUES ($1, $2, $3, $4, $5, now() + make_interval(hours => $6)) "
-    "RETURNING id, token, role, expires_at"
+    "INSERT INTO invites (token, role, tg_id, note, created_by, expires_at, role_days) "
+    "VALUES ($1, $2, $3, $4, $5, now() + make_interval(hours => $6), $7) "
+    "RETURNING id, token, role, role_days, expires_at"
 )
 LIST_INVITES = (
-    "SELECT i.id, i.token, i.role, i.tg_id, i.note, i.created_at, i.expires_at, i.used_at, "
+    "SELECT i.id, i.token, i.role, i.role_days, i.tg_id, i.note, i.created_at, i.expires_at, i.used_at, "
     "u.username AS used_by_name FROM invites i LEFT JOIN users u ON u.id = i.used_by "
     "ORDER BY i.id DESC LIMIT 100"
 )
@@ -82,7 +105,7 @@ NEW_REQUEST = (
     "ON CONFLICT (tg_id) WHERE status = 'pending' DO NOTHING RETURNING id"
 )
 LAST_REQUEST = (
-    "SELECT r.id, r.status, r.created_at, i.token, i.role, i.expires_at, i.used_at "
+    "SELECT r.id, r.status, r.created_at, i.token, i.role, i.role_days, i.expires_at, i.used_at "
     "FROM access_requests r LEFT JOIN invites i ON i.id = r.invite_id "
     "WHERE r.tg_id = $1 ORDER BY r.id DESC LIMIT 1"
 )
@@ -95,20 +118,23 @@ DECIDE = (
     "UPDATE access_requests SET status = $2, invite_id = $3, decided_at = now() WHERE id = $1"
 )
 DELIVERIES = (
-    "SELECT r.id, r.tg_id, r.status, i.token, i.role, i.expires_at "
+    "SELECT r.id, r.tg_id, r.status, i.token, i.role, i.role_days, i.expires_at "
     "FROM access_requests r LEFT JOIN invites i ON i.id = r.invite_id "
     "WHERE r.status IN ('approved', 'rejected') AND NOT r.notified ORDER BY r.id LIMIT 20"
 )
 MARK_NOTIFIED = "UPDATE access_requests SET notified = TRUE WHERE id = $1"
 LIST_USERS = (
-    "SELECT u.id, u.username, u.role, u.tg_id, u.created_at, "
+    f"SELECT u.id, u.username, {ROLE_SQL} AS role, u.role_until, u.tg_id, u.created_at, "
     "COALESCE((SELECT count FROM search_usage s WHERE s.user_id = u.id "
     f"AND s.day = {TODAY_SQL}), 0) AS today, "
     "COALESCE((SELECT sum(count) FROM search_usage s WHERE s.user_id = u.id), 0)::int AS total "
     "FROM users u ORDER BY u.id"
 )
 GET_USER = "SELECT id, role FROM users WHERE id = $1"
-SET_ROLE = "UPDATE users SET role = $2 WHERE id = $1"
+SET_ROLE = (
+    "UPDATE users SET role = $2::text, role_until = CASE WHEN $2::text = 'vip' "
+    "AND $3::int IS NOT NULL THEN now() + make_interval(days => $3::int) END WHERE id = $1"
+)
 DELETE_USER = "DELETE FROM users WHERE id = $1"
 COUNT_ADMINS = "SELECT count(*)::int FROM users WHERE role = 'admin'"
 
@@ -186,13 +212,47 @@ def public_user(row):
     return {"id": row["id"], "username": row["username"], "role": row["role"]}
 
 
-def throttled(key):
-    now = time.monotonic()
-    if len(ATTEMPTS) > 10000:
-        ATTEMPTS.clear()
-    recent = [t for t in ATTEMPTS.get(key, []) if now - t < WINDOW]
-    ATTEMPTS[key] = recent
-    return len(recent) >= MAX_FAILS
+def check_days(role, days):
+    if days in (None, 0):
+        return None
+    if role != "vip":
+        raise AuthError("Срок задается только для VIP")
+    if not isinstance(days, int) or not 1 <= days <= MAX_DAYS:
+        raise AuthError(f"Срок: от 1 до {MAX_DAYS} дней")
+    return days
+
+
+def throttle_keys(ip, username):
+    return f"login:fail:{ip}:{username[:64]}", f"login:ip:{ip}"
+
+
+async def throttled(ip, username):
+    try:
+        redis = await get_redis()
+        by_user, by_ip = await redis.mget(*throttle_keys(ip, username))
+        return int(by_user or 0) >= MAX_FAILS or int(by_ip or 0) >= MAX_IP_FAILS
+    except Exception:
+        return False
+
+
+async def record_fail(ip, username):
+    try:
+        redis = await get_redis()
+        pipe = redis.pipeline()
+        for key in throttle_keys(ip, username):
+            pipe.incr(key)
+            pipe.expire(key, WINDOW)
+        await pipe.execute()
+    except Exception:
+        pass
+
+
+async def clear_fails(ip, username):
+    try:
+        redis = await get_redis()
+        await redis.delete(throttle_keys(ip, username)[0])
+    except Exception:
+        pass
 
 
 def validate_credentials(username, password):
@@ -220,7 +280,12 @@ async def register(token, username, password):
                 if invite is None:
                     raise AuthError("Токен недействителен или истек")
                 user = await conn.fetchrow(
-                    CREATE_USER, username, pass_hash, invite["role"], invite["tg_id"]
+                    CREATE_USER,
+                    username,
+                    pass_hash,
+                    invite["role"],
+                    invite["tg_id"],
+                    invite["role_days"],
                 )
                 await conn.execute(LINK_INVITE, invite["id"], user["id"])
                 session = await create_session(conn, user["id"])
@@ -232,8 +297,8 @@ async def register(token, username, password):
 
 
 async def login(username, password, ip):
-    key = (ip, (username or "").strip().lower())
-    if throttled(key):
+    name = (username or "").strip().lower()
+    if await throttled(ip, name):
         raise AuthError("Слишком много попыток, подождите несколько минут", 429)
     pool = database.get_pool()
     row = await pool.fetchrow(USER_BY_NAME, (username or "").strip())
@@ -241,9 +306,9 @@ async def login(username, password, ip):
         check_password, password or "", row["pass_hash"] if row else DUMMY_HASH
     )
     if not row or not ok:
-        ATTEMPTS.setdefault(key, []).append(time.monotonic())
+        await record_fail(ip, name)
         raise AuthError("Неверный логин или пароль", 401)
-    ATTEMPTS.pop(key, None)
+    await clear_fails(ip, name)
     await pool.execute(DROP_EXPIRED)
     async with pool.acquire() as conn:
         session = await create_session(conn, row["id"])
@@ -286,6 +351,7 @@ async def profile(user):
     return {
         **public_user(user),
         "tg_linked": user["tg_id"] is not None,
+        "role_until": user.get("role_until"),
         "quota": quota_info(user["role"], used),
         "rank": rank_info(total),
     }
@@ -308,9 +374,10 @@ async def bootstrap_admin():
         print(f"ADMIN READY: login={name} password from ADMIN_PASSWORD", flush=True)
 
 
-async def create_invite(role, note, admin_id, tg_id=None, conn=None):
+async def create_invite(role, note, admin_id, tg_id=None, conn=None, days=None):
     if role not in ROLES:
         raise AuthError("Неизвестная роль")
+    days = check_days(role, days)
     runner = conn or database.get_pool()
     row = await runner.fetchrow(
         NEW_INVITE,
@@ -320,6 +387,7 @@ async def create_invite(role, note, admin_id, tg_id=None, conn=None):
         (note or "").strip()[:200] or None,
         admin_id,
         settings.invite_hours,
+        days,
     )
     return dict(row)
 
@@ -357,9 +425,10 @@ async def list_requests():
     return [dict(r) for r in await database.get_pool().fetch(LIST_REQUESTS)]
 
 
-async def approve_request(request_id, role, admin_id):
+async def approve_request(request_id, role, admin_id, days=None):
     if role not in REQUEST_ROLES:
         raise AuthError("По заявке можно выдать только роль user или vip")
+    days = check_days(role, days)
     async with database.get_pool().acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(GET_REQUEST, request_id)
@@ -369,7 +438,7 @@ async def approve_request(request_id, role, admin_id):
                 raise AuthError("Заявка уже обработана", 409)
             who = f"@{row['tg_username']}" if row["tg_username"] else str(row["tg_id"])
             invite = await create_invite(
-                role, f"заявка #{request_id} {who}", admin_id, row["tg_id"], conn
+                role, f"заявка #{request_id} {who}", admin_id, row["tg_id"], conn, days
             )
             await conn.execute(DECIDE, request_id, "approved", invite["id"])
     return invite
@@ -408,13 +477,14 @@ async def guard_admin(conn, user_id, acting_id):
         raise AuthError("Нельзя убрать последнего админа")
 
 
-async def set_role(user_id, role, acting_id):
+async def set_role(user_id, role, acting_id, days=None):
     if role not in ROLES:
         raise AuthError("Неизвестная роль")
+    days = check_days(role, days)
     async with database.get_pool().acquire() as conn:
         async with conn.transaction():
             await guard_admin(conn, user_id, acting_id)
-            await conn.execute(SET_ROLE, user_id, role)
+            await conn.execute(SET_ROLE, user_id, role, days)
 
 
 async def delete_user(user_id, acting_id):
@@ -422,3 +492,79 @@ async def delete_user(user_id, acting_id):
         async with conn.transaction():
             await guard_admin(conn, user_id, acting_id)
             await conn.execute(DELETE_USER, user_id)
+
+
+async def quota_now(user):
+    used = await database.get_pool().fetchval(USED_TODAY, user["id"])
+    return quota_info(user["role"], used)
+
+
+async def change_password(user, current, new, token):
+    new = new or ""
+    if not 8 <= len(new) <= 128:
+        raise AuthError("Пароль: от 8 до 128 символов")
+    pool = database.get_pool()
+    stored = await pool.fetchval(USER_PASS, user["id"])
+    if not await asyncio.to_thread(check_password, current or "", stored or DUMMY_HASH):
+        raise AuthError("Текущий пароль неверный", 403)
+    pass_hash = await asyncio.to_thread(hash_password, new)
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(SET_PASS, user["id"], pass_hash)
+            await conn.execute(DROP_OTHER_SESSIONS, user["id"], session_hash(token or ""))
+
+
+async def reset_password(user_id, new=None):
+    new = new or secrets.token_urlsafe(9)
+    if not 8 <= len(new) <= 128:
+        raise AuthError("Пароль: от 8 до 128 символов")
+    pass_hash = await asyncio.to_thread(hash_password, new)
+    async with database.get_pool().acquire() as conn:
+        async with conn.transaction():
+            if await conn.fetchval(GET_USER, user_id) is None:
+                raise AuthError("Пользователь не найден", 404)
+            await conn.execute(SET_PASS, user_id, pass_hash)
+            await conn.execute(DROP_USER_SESSIONS, user_id)
+    return new
+
+
+async def link_code(user):
+    code = "".join(secrets.choice(ALPHABET) for _ in range(8))
+    async with database.get_pool().acquire() as conn:
+        async with conn.transaction():
+            await conn.execute(DROP_LINKS, user["id"])
+            await conn.execute(NEW_LINK, code, user["id"])
+    return code
+
+
+async def link_tg(code, tg_id):
+    code = re.sub(r"[^A-Z0-9]", "", (code or "").upper())
+    try:
+        async with database.get_pool().acquire() as conn:
+            async with conn.transaction():
+                user_id = await conn.fetchval(CLAIM_LINK, code)
+                if user_id is None:
+                    raise AuthError("Код недействителен или истек")
+                await conn.execute(SET_TG, user_id, tg_id)
+                row = await conn.fetchrow(
+                    f"SELECT {USER_COLS} FROM users u WHERE u.id = $1", user_id
+                )
+    except asyncpg.UniqueViolationError:
+        raise AuthError("Этот Telegram уже привязан к другому аккаунту")
+    return dict(row)
+
+
+async def unlink_tg(user_id):
+    await database.get_pool().execute(SET_TG, user_id, None)
+
+
+async def pending_for_admins():
+    pool = database.get_pool()
+    admins = [r["tg_id"] for r in await pool.fetch(ADMIN_TGS)]
+    if not admins:
+        return [], []
+    return admins, [dict(r) for r in await pool.fetch(PENDING_FOR_ADMINS)]
+
+
+async def mark_admin_notified(request_id):
+    await database.get_pool().execute(MARK_ADMIN_NOTIFIED, request_id)

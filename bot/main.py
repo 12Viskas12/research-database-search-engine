@@ -7,7 +7,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from app.core.config import settings
 from app.db import database
 from app.services import auth_service
-from bot.handlers import router, token_text
+from bot.handlers import request_keyboard, request_text, router, token_text
 
 log = logging.getLogger("bot")
 
@@ -17,7 +17,7 @@ async def deliver(bot):
         try:
             for item in await auth_service.deliveries():
                 if item["status"] == "approved":
-                    text = token_text(item["token"], item["role"], item["expires_at"])
+                    text = token_text(item["token"], item["role"], item["expires_at"], item["role_days"])
                 else:
                     text = "Заявка отклонена."
                 try:
@@ -33,6 +33,27 @@ async def deliver(bot):
         await asyncio.sleep(5)
 
 
+async def notify_admins(bot):
+    while True:
+        try:
+            admins, pending = await auth_service.pending_for_admins()
+            for item in pending:
+                sent = False
+                for admin_id in admins:
+                    try:
+                        await bot.send_message(
+                            admin_id, request_text(item), reply_markup=request_keyboard(item["id"])
+                        )
+                        sent = True
+                    except (TelegramForbiddenError, TelegramBadRequest):
+                        pass
+                if sent:
+                    await auth_service.mark_admin_notified(item["id"])
+        except Exception:
+            log.exception("admin notify failed")
+        await asyncio.sleep(5)
+
+
 async def main():
     if not settings.bot_token:
         print("BOT_TOKEN is empty, bot is disabled", flush=True)
@@ -41,11 +62,12 @@ async def main():
     bot = Bot(settings.bot_token)
     dp = Dispatcher()
     dp.include_router(router)
-    task = asyncio.create_task(deliver(bot))
+    tasks = [asyncio.create_task(deliver(bot)), asyncio.create_task(notify_admins(bot))]
     try:
         await dp.start_polling(bot)
     finally:
-        task.cancel()
+        for task in tasks:
+            task.cancel()
         await bot.session.close()
         await database.close_pool()
 

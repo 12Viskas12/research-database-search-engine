@@ -92,4 +92,52 @@ CREATE TABLE IF NOT EXISTS search_usage (
     count INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (user_id, day)
 );
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS role_until TIMESTAMPTZ;
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS role_days INTEGER;
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS admin_notified BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+CREATE TABLE IF NOT EXISTS vocab (
+    word TEXT PRIMARY KEY,
+    freq INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS vocab_trgm_idx ON vocab USING GIN (word gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS records_trgm_idx ON records USING GIN (search_text gin_trgm_ops);
+
+CREATE TABLE IF NOT EXISTS audit_log (
+    id BIGSERIAL PRIMARY KEY,
+    at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    actor_id INTEGER,
+    actor_name TEXT,
+    action TEXT NOT NULL,
+    details JSONB
+);
+
+CREATE INDEX IF NOT EXISTS audit_action_idx ON audit_log (action, id DESC);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value JSONB NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS search_history (
+    id BIGSERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    query TEXT NOT NULL,
+    files TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT 'web',
+    results INTEGER NOT NULL DEFAULT 0,
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS history_user_idx ON search_history (user_id, id DESC);
+
+CREATE TABLE IF NOT EXISTS tg_links (
+    code TEXT PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL
+);
 """

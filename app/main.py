@@ -5,16 +5,26 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.core.redis_client import close_redis
+from app.core.redis_client import close_redis, get_redis
 from app.db import database
 from app.routers import admin, auth, compress, files, pages, search
-from app.services import auth_service
+from app.services import auth_service, vocab_service
+
+
+async def backfill_vocab():
+    try:
+        if await vocab_service.needs_rebuild():
+            redis = await get_redis()
+            await redis.enqueue_job("rebuild_vocab", _job_id="rebuild_vocab_startup")
+    except Exception:
+        pass
 
 
 @asynccontextmanager
 async def lifespan(app):
     await database.init_pool()
     await auth_service.bootstrap_admin()
+    await backfill_vocab()
     yield
     await close_redis()
     await database.close_pool()

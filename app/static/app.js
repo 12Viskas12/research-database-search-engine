@@ -12,16 +12,21 @@ const STATUS = {
 const BUSY = ["processing", "packing", "unpacking"];
 const TABS = [
   { id: "search", label: "Поиск" },
+  { id: "history", label: "История" },
+  { id: "profile", label: "Профиль" },
   { id: "files", label: "Файлы", admin: true },
   { id: "requests", label: "Заявки", admin: true },
   { id: "invites", label: "Токены", admin: true },
   { id: "users", label: "Пользователи", admin: true },
+  { id: "audit", label: "Журнал", admin: true },
 ];
 
 let me = null;
 let tab = "search";
 let timer = null;
 let toastTimer = null;
+let current = null;
+let auditBefore = null;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -134,6 +139,7 @@ function renderMe() {
   const badge = $("me-role");
   badge.textContent = ROLE[me.role];
   badge.className = `badge ${me.role}`;
+  badge.title = me.role_until ? `до ${date(me.role_until)}` : "";
   const rank = me.rank;
   let text = `${rank.title} · поисков: ${rank.total}`;
   if (rank.next_at) text += ` · до «${rank.next_title}» ещё ${rank.next_at - rank.total}`;
@@ -178,7 +184,12 @@ function switchTab(id) {
     requests: [loadRequests, 5000],
     invites: [loadInvites, 0],
     users: [loadUsers, 0],
+    audit: [() => loadAudit(true), 0],
+    history: [loadHistory, 0],
+    profile: [renderProfile, 0],
+    search: [loadSources, 0],
   };
+  if (id === "files") loadAutopack();
   const entry = loaders[id];
   if (!entry) return;
   entry[0]();
@@ -189,19 +200,14 @@ function escapeRe(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function terms(query) {
-  const found = query.toLowerCase().match(/[\p{L}\p{N}_]+/gu) || [];
-  const list = found.length ? found : [query.trim().toLowerCase()];
-  return [...new Set(list.filter(Boolean))].sort((a, b) => b.length - a.length);
-}
-
 function highlight(text, list) {
   const frag = document.createDocumentFragment();
-  if (!list.length) {
+  const marks = [...new Set(list.filter(Boolean))].sort((a, b) => b.length - a.length);
+  if (!marks.length) {
     frag.append(text);
     return frag;
   }
-  const re = new RegExp(`(${list.map(escapeRe).join("|")})`, "giu");
+  const re = new RegExp(`(${marks.map(escapeRe).join("|")})`, "giu");
   text.split(re).forEach((part, i) => {
     if (i % 2) frag.append(el("mark", "", part));
     else if (part) frag.append(part);
@@ -224,40 +230,151 @@ function renderItem(item, list, title) {
 
 function showResults(nodes) {
   $("results").replaceChildren(...nodes);
+  $("more").hidden = true;
+}
+
+async function loadSources() {
+  const res = await api("/api/sources");
+  if (!res.ok) return;
+  const select = $("scope");
+  const value = select.value;
+  select.replaceChildren(new Option("Все файлы", ""));
+  res.data.forEach((f) => select.append(new Option(f.name, String(f.id))));
+  select.value = [...select.options].some((o) => o.value === value) ? value : "";
 }
 
 async function runSearch(url, render) {
   const res = await api(url);
-  if (res.status === 429) {
-    showResults([el("p", "empty", detail(res))]);
-    refreshMe();
-    return;
-  }
   if (!res.ok) {
     showResults([el("p", "empty", detail(res))]);
-    return;
+    if (res.status === 429) refreshMe();
+    return false;
   }
   render(res.data);
   if (res.data.quota) renderQuota(res.data.quota);
   refreshMe();
+  return true;
 }
+
+function searchUrl(state) {
+  const params = new URLSearchParams({ q: state.q, offset: String(state.offset) });
+  if (state.files) params.set("files", state.files);
+  if (state.searchId && state.offset) params.set("search_id", String(state.searchId));
+  return `/api/search?${params}`;
+}
+
+async function startSearch(q, files) {
+  current = { q, files, offset: 0, searchId: null, marks: [], shown: 0 };
+  await runSearch(searchUrl(current), (data) => {
+    current.searchId = data.search_id;
+    current.marks = data.marks || [];
+    current.shown = data.items.length;
+    showResults(
+      data.items.length
+        ? data.items.map((item) => renderItem(item, current.marks))
+        : [el("p", "empty", "Ничего не найдено")]
+    );
+    $("more").hidden = !data.more;
+  });
+}
+
+$("more").addEventListener("click", async () => {
+  if (!current) return;
+  const next = { ...current, offset: current.shown };
+  await runSearch(searchUrl(next), (data) => {
+    current.shown += data.items.length;
+    current.marks = data.marks || current.marks;
+    $("results").append(...data.items.map((item) => renderItem(item, current.marks)));
+    $("more").hidden = !data.more;
+  });
+});
 
 $("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const q = $("query").value.trim();
   if (!q) return;
-  const list = terms(q);
-  runSearch(`/api/search?q=${encodeURIComponent(q)}`, ({ items }) => {
-    showResults(
-      items.length
-        ? items.map((item) => renderItem(item, list))
-        : [el("p", "empty", "Ничего не найдено")]
-    );
-  });
+  startSearch(q, $("scope").value);
 });
 
 $("lucky").addEventListener("click", () => {
+  current = null;
   runSearch("/api/lucky", ({ item }) => showResults([renderItem(item, [], "Случайная запись")]));
+});
+
+async function loadHistory() {
+  const res = await api("/api/history");
+  if (!res.ok) return;
+  if (!res.data.length) {
+    $("history").replaceChildren(el("li", "empty", "История пуста"));
+    return;
+  }
+  $("history").replaceChildren(
+    ...res.data.map((h) => {
+      const li = el("li", "item");
+      const info = el("div", "item-info");
+      const sub = [date(h.at), `найдено на первой странице: ${h.results}`];
+      if (h.source === "bot") sub.push("бот");
+      if (h.files) sub.push("с фильтром по файлу");
+      info.append(el("div", "item-title", h.query), el("div", "item-sub", sub.join(" · ")));
+      const side = el("div", "item-side");
+      side.append(
+        button("Повторить", "mini", () => {
+          $("query").value = h.query;
+          $("scope").value = h.files.includes(",") ? "" : h.files;
+          switchTab("search");
+          startSearch(h.query, $("scope").value);
+        })
+      );
+      li.append(info, side);
+      return li;
+    })
+  );
+}
+
+$("history-clear").addEventListener("click", () => {
+  if (confirm("Очистить историю поиска?")) act("/api/history", { method: "DELETE" }, loadHistory);
+});
+
+function renderProfile() {
+  const box = $("tg-box");
+  box.replaceChildren();
+  if (me.tg_linked) {
+    box.append(
+      el("p", "muted", "Telegram привязан."),
+      button("Отвязать", "mini danger", () =>
+        act("/api/auth/tg", { method: "DELETE" }, async () => {
+          await refreshMe();
+          renderProfile();
+        })
+      )
+    );
+    return;
+  }
+  box.append(
+    el("p", "muted", "Получите код и отправьте боту: /link КОД"),
+    button("Получить код", "mini", () =>
+      act("/api/auth/tg-code", { method: "POST" }, (d) => {
+        const code = el("div", "token-box");
+        code.append(
+          el("span", "token mono", d.code),
+          el("span", "muted-inline", `действует ${d.minutes} минут`),
+          button("Копировать", "mini", () => copy(d.code))
+        );
+        box.append(code);
+      })
+    )
+  );
+}
+
+$("password-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const json = { current: $("pw-current").value, new: $("pw-new").value };
+  const ok = await act("/api/auth/password", { method: "POST", json });
+  if (ok) {
+    $("pw-current").value = "";
+    $("pw-new").value = "";
+    toast("Пароль изменен");
+  }
 });
 
 function renderFile(f) {
@@ -315,6 +432,29 @@ async function loadFiles() {
   $("stats").textContent = `${text}. На диске: записи ${size(s.records_size)}, сжатые блоки ${size(s.blocks_size)}`;
 }
 
+async function loadAutopack() {
+  const res = await api("/api/admin/settings");
+  if (!res.ok) return;
+  const a = res.data.autopack;
+  $("ap-enabled").checked = a.enabled;
+  $("ap-days").value = String(a.days);
+  $("ap-method").value = a.method;
+}
+
+$("autopack-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const json = {
+    enabled: $("ap-enabled").checked,
+    days: Number($("ap-days").value),
+    method: $("ap-method").value,
+  };
+  act("/api/admin/settings", { method: "PUT", json }, () => toast("Сохранено"));
+});
+
+$("vocab-rebuild").addEventListener("click", () => {
+  act("/api/admin/vocab/rebuild", { method: "POST" }, () => toast("Словарь обновляется в фоне"));
+});
+
 $("upload-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const input = $("file");
@@ -338,6 +478,14 @@ $("reclaim").addEventListener("click", () => {
   );
 });
 
+function days(value) {
+  return value ? Number(value) : null;
+}
+
+function term(role, n) {
+  return role === "vip" && n ? ` · ${n} дн.` : "";
+}
+
 function who(r) {
   return r.tg_username ? `@${r.tg_username}` : `tg ${r.tg_id}`;
 }
@@ -359,10 +507,14 @@ async function loadRequests() {
       const side = el("div", "item-side");
       if (r.status === "pending") {
         const decide = (role) =>
-          act(`/api/admin/requests/${r.id}/approve`, { method: "POST", json: { role } }, () => {
-            toast("Одобрено. Бот отправит токен пользователю, он есть и во вкладке «Токены»");
-            loadRequests();
-          });
+          act(
+            `/api/admin/requests/${r.id}/approve`,
+            { method: "POST", json: { role, days: role === "vip" ? days($("req-days").value) : null } },
+            () => {
+              toast("Одобрено. Бот отправит токен пользователю, он есть и во вкладке «Токены»");
+              loadRequests();
+            }
+          );
         side.append(
           button("Обычный", "mini", () => decide("user")),
           button("VIP", "mini", () => decide("vip")),
@@ -408,7 +560,7 @@ async function loadInvites() {
       const li = el("li", "item");
       const info = el("div", "item-info");
       const title = el("div", "item-title mono", i.token);
-      title.append(" ", el("span", `badge ${i.role}`, ROLE[i.role]));
+      title.append(" ", el("span", `badge ${i.role}`, ROLE[i.role] + term(i.role, i.role_days)));
       info.append(title, el("div", "item-sub", [i.note, date(i.created_at)].filter(Boolean).join(" · ")));
       const side = el("div", "item-side");
       side.append(el("span", `state ${state.cls}`, state.text));
@@ -428,7 +580,12 @@ async function loadInvites() {
 
 $("invite-form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  const json = { role: $("invite-role").value, note: $("invite-note").value };
+  const role = $("invite-role").value;
+  const json = {
+    role,
+    note: $("invite-note").value,
+    days: role === "vip" ? days($("invite-days").value) : null,
+  };
   const data = await act("/api/admin/invites", { method: "POST", json });
   if (!data) return;
   $("invite-note").value = "";
@@ -436,7 +593,7 @@ $("invite-form").addEventListener("submit", async (e) => {
   box.hidden = false;
   box.replaceChildren(
     el("span", "token mono", data.token),
-    el("span", "badge " + data.role, ROLE[data.role]),
+    el("span", "badge " + data.role, ROLE[data.role] + term(data.role, data.role_days)),
     button("Копировать", "mini", () => copy(data.token))
   );
   loadInvites();
@@ -455,7 +612,7 @@ async function loadUsers() {
         el(
           "div",
           "item-sub",
-          `сегодня ${u.today}, всего ${u.total}${u.tg_id ? " · Telegram привязан" : ""} · ${date(u.created_at)}`
+          `сегодня ${u.today}, всего ${u.total}${u.role_until ? ` · до ${date(u.role_until)}` : ""}${u.tg_id ? " · Telegram привязан" : ""} · ${date(u.created_at)}`
         )
       );
       const side = el("div", "item-side");
@@ -468,11 +625,39 @@ async function loadUsers() {
       }
       select.disabled = own;
       select.addEventListener("change", async () => {
-        const ok = await act(`/api/admin/users/${u.id}`, { method: "PATCH", json: { role: select.value } });
-        if (!ok) loadUsers();
-        else toast("Роль изменена");
+        let n = null;
+        if (select.value === "vip") {
+          const answer = prompt("На сколько дней VIP? Пусто = навсегда", "30");
+          if (answer === null) {
+            loadUsers();
+            return;
+          }
+          n = days(answer.trim());
+          if (answer.trim() && !n) {
+            toast("Нужно число дней");
+            loadUsers();
+            return;
+          }
+        }
+        const ok = await act(`/api/admin/users/${u.id}`, {
+          method: "PATCH",
+          json: { role: select.value, days: n },
+        });
+        if (ok) toast("Роль изменена");
+        loadUsers();
       });
       side.append(select);
+      side.append(
+        button("Пароль", "mini", async () => {
+          const answer = prompt("Новый пароль (пусто = случайный)", "");
+          if (answer === null) return;
+          const data = await act(`/api/admin/users/${u.id}/password`, {
+            method: "POST",
+            json: { password: answer || null },
+          });
+          if (data) prompt("Новый пароль, передайте пользователю:", data.password);
+        })
+      );
       if (!own) {
         side.append(
           button("Удалить", "mini danger", () => {
@@ -487,6 +672,78 @@ async function loadUsers() {
     })
   );
 }
+
+const ACTION = {
+  register: "регистрация",
+  login: "вход",
+  login_failed: "неудачный вход",
+  password_changed: "смена пароля",
+  password_reset: "сброс пароля",
+  tg_linked: "привязка Telegram",
+  tg_unlinked: "отвязка Telegram",
+  role_changed: "смена роли",
+  user_deleted: "удаление пользователя",
+  invite_created: "токен создан",
+  invite_deleted: "токен удален",
+  request_approved: "заявка одобрена",
+  request_rejected: "заявка отклонена",
+  settings_changed: "настройки",
+  file_uploaded: "загрузка файла",
+  file_pack: "сжатие файла",
+  file_unpack: "распаковка файла",
+  files_merged: "объединение файлов",
+  reclaim: "освобождение места",
+  autopack: "автосжатие",
+  vocab_rebuilt: "словарь поиска",
+};
+
+function auditRow(e) {
+  const li = el("li", "item");
+  const info = el("div", "item-info");
+  const title = `${ACTION[e.action] || e.action}${e.actor_name ? ` · ${e.actor_name}` : ""}`;
+  const parts = e.details
+    ? Object.entries(e.details)
+        .filter(([, v]) => v !== null && v !== "")
+        .map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`)
+    : [];
+  info.append(el("div", "item-title", title), el("div", "item-sub detail", [date(e.at), ...parts].join(" · ")));
+  li.append(info);
+  return li;
+}
+
+async function loadAudit(reset) {
+  if (reset) auditBefore = null;
+  const params = new URLSearchParams({ limit: "50" });
+  if (auditBefore) params.set("before", String(auditBefore));
+  if ($("audit-action").value) params.set("action", $("audit-action").value);
+  if ($("audit-actor").value.trim()) params.set("actor", $("audit-actor").value.trim());
+  const res = await api(`/api/admin/audit?${params}`);
+  if (!res.ok) return;
+  const rows = res.data.items.map(auditRow);
+  if (reset) {
+    $("audit").replaceChildren(...(rows.length ? rows : [el("li", "empty", "Записей нет")]));
+    const kinds = await api("/api/admin/audit/actions");
+    if (kinds.ok) {
+      const select = $("audit-action");
+      const value = select.value;
+      select.replaceChildren(new Option("Все действия", ""));
+      kinds.data.forEach((a) => select.append(new Option(ACTION[a] || a, a)));
+      select.value = value;
+    }
+  } else {
+    $("audit").append(...rows);
+  }
+  const items = res.data.items;
+  auditBefore = items.length ? items[items.length - 1].id : auditBefore;
+  $("audit-more").hidden = !res.data.more;
+}
+
+$("audit-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  loadAudit(true);
+});
+
+$("audit-more").addEventListener("click", () => loadAudit(false));
 
 document.querySelectorAll("[data-auth]").forEach((node) => {
   node.addEventListener("click", () => {
