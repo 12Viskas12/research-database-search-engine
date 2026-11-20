@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import uuid
@@ -22,15 +23,24 @@ async def upload(file: UploadFile = File(...), admin=Depends(admin_user)):
         ext = ""
     os.makedirs(settings.upload_dir, exist_ok=True)
     path = os.path.join(settings.upload_dir, f"{uuid.uuid4().hex}{ext}")
+    digest = hashlib.sha256()
     async with aiofiles.open(path, "wb") as out:
         while chunk := await file.read(1024 * 1024):
+            digest.update(chunk)
             await out.write(chunk)
+    sha = digest.hexdigest()
+    duplicate = await database.find_duplicate(sha)
+    if duplicate:
+        os.remove(path)
+        raise HTTPException(
+            409, f"Такой файл уже загружен: {duplicate['name']} (id {duplicate['id']})"
+        )
     try:
         get_parser(path)
     except ValueError as e:
         os.remove(path)
         raise HTTPException(400, str(e))
-    file_id = await database.create_file(file.filename, path)
+    file_id = await database.create_file(file.filename, path, sha)
     redis = await get_redis()
     await redis.enqueue_job("process_file", file_id)
     await audit_service.log(admin, "file_uploaded", file=file_id, name=file.filename)
@@ -40,6 +50,36 @@ async def upload(file: UploadFile = File(...), admin=Depends(admin_user)):
 @router.get("")
 async def list_files():
     return await database.list_files()
+
+
+@router.post("/{file_id}/retry", status_code=202)
+async def retry(file_id: int, admin=Depends(admin_user)):
+    record = await database.get_file(file_id)
+    if record is None:
+        raise HTTPException(404, "File not found")
+    if record["status"] != "failed":
+        raise HTTPException(409, "Повторить можно только файл с ошибкой")
+    if not record["path"] or not os.path.exists(record["path"]):
+        raise HTTPException(400, "Исходный файл удален, загрузите его заново")
+    await database.set_file_status(file_id, "pending")
+    redis = await get_redis()
+    await redis.enqueue_job("process_file", file_id)
+    await audit_service.log(admin, "file_retry", file=file_id)
+    return {"id": file_id, "status": "pending"}
+
+
+@router.delete("/{file_id}", status_code=202)
+async def delete(file_id: int, admin=Depends(admin_user)):
+    record = await database.get_file(file_id)
+    if record is None:
+        raise HTTPException(404, "File not found")
+    if record["status"] not in ("done", "failed"):
+        raise HTTPException(409, "Файл сейчас обрабатывается")
+    await database.set_file_status(file_id, "deleting")
+    redis = await get_redis()
+    await redis.enqueue_job("delete_file", file_id)
+    await audit_service.log(admin, "file_deleted", file=file_id, name=record["name"])
+    return {"id": file_id, "status": "deleting"}
 
 
 @router.get("/{file_id}")

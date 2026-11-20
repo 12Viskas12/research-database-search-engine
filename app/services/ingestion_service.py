@@ -3,7 +3,7 @@ import asyncio
 import pandas as pd
 
 from app.db import database
-from app.services import vocab_service
+from app.services import normalize, vocab_service
 from app.services.cleaner import clean_dataframe
 
 BATCH = 1000
@@ -15,7 +15,8 @@ def _build(file_id, rows):
     for row in df.to_dict("records"):
         data = {k: v for k, v in row.items() if isinstance(v, str)}
         if data:
-            records.append((file_id, data, " ".join(data.values())))
+            text = " ".join([*data.values(), normalize.index_extra(data.values())])
+            records.append((file_id, data, text.strip()))
     return records
 
 

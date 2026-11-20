@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     site_url: str = "http://localhost:8000"
     admin_username: str = "admin"
     admin_password: str = ""
-    quota_user: int = 5
+    quota_user: int = 3
     quota_vip: int = 50
     session_days: int = 14
     invite_hours: int = 72

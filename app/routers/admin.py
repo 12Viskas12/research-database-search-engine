@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 from app.core.deps import admin_user
 from app.core.redis_client import get_redis
-from app.services import audit_service, auth_service, settings_service
+from app.services import audit_service, auth_service, settings_service, stats_service
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(admin_user)])
 
@@ -21,6 +21,10 @@ class InviteBody(BaseModel):
 
 class PasswordBody(BaseModel):
     password: str | None = None
+
+
+class BlockBody(BaseModel):
+    blocked: bool
 
 
 class AutopackBody(BaseModel):
@@ -94,6 +98,20 @@ async def reset_password(user_id: int, body: PasswordBody, admin=Depends(admin_u
     password = await auth_service.reset_password(user_id, body.password)
     await audit_service.log(admin, "password_reset", user=user_id)
     return {"password": password}
+
+
+@router.post("/users/{user_id}/block")
+async def block_user(user_id: int, body: BlockBody, admin=Depends(admin_user)):
+    await auth_service.set_blocked(user_id, body.blocked, admin["id"])
+    await audit_service.log(
+        admin, "user_blocked" if body.blocked else "user_unblocked", user=user_id
+    )
+    return {"ok": True}
+
+
+@router.get("/stats")
+async def stats():
+    return await stats_service.stats()
 
 
 @router.delete("/users/{user_id}")

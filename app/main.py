@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.core import logs
 from app.core.redis_client import close_redis, get_redis
 from app.db import database
 from app.routers import admin, auth, compress, files, pages, search
@@ -30,12 +31,25 @@ async def lifespan(app):
     await database.close_pool()
 
 
+logs.setup()
 app = FastAPI(lifespan=lifespan)
+app.middleware("http")(logs.request_logger)
 
 
 @app.exception_handler(auth_service.AuthError)
 async def auth_error(request: Request, exc: auth_service.AuthError):
     return JSONResponse({"detail": str(exc)}, status_code=exc.status)
+
+
+@app.get("/health")
+async def health():
+    try:
+        await database.get_pool().fetchval("SELECT 1")
+        redis = await get_redis()
+        await redis.ping()
+    except Exception:
+        return JSONResponse({"status": "down"}, status_code=503)
+    return {"status": "ok"}
 
 
 app.mount(

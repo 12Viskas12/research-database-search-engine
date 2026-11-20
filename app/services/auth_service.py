@@ -28,11 +28,11 @@ MAX_FAILS = 8
 MAX_IP_FAILS = 40
 MAX_DAYS = 3650
 
-TODAY_SQL = "(now() AT TIME ZONE 'UTC')::date"
+MONTH_SQL = "date_trunc('month', now() AT TIME ZONE 'UTC')::date"
 ROLE_SQL = (
     "CASE WHEN u.role = 'vip' AND u.role_until <= now() THEN 'user' ELSE u.role END"
 )
-USER_COLS = f"u.id, u.username, {ROLE_SQL} AS role, u.role_until, u.tg_id"
+USER_COLS = f"u.id, u.username, {ROLE_SQL} AS role, u.role_until, u.tg_id, u.blocked"
 CREATE_USER = (
     "INSERT INTO users AS u (username, pass_hash, role, tg_id, role_until) "
     "VALUES ($1, $2, $3, $4, CASE WHEN $5::int IS NULL THEN NULL "
@@ -49,7 +49,7 @@ USER_BY_NAME = (
 )
 USER_BY_SESSION = (
     f"SELECT {USER_COLS} FROM sessions s JOIN users u ON u.id = s.user_id "
-    "WHERE s.token_hash = $1 AND s.expires_at > now()"
+    "WHERE s.token_hash = $1 AND s.expires_at > now() AND NOT u.blocked"
 )
 USER_BY_TG = f"SELECT {USER_COLS} FROM users u WHERE u.tg_id = $1"
 USER_PASS = "SELECT pass_hash FROM users WHERE id = $1"
@@ -91,13 +91,13 @@ LIST_INVITES = (
 )
 DELETE_INVITE = "DELETE FROM invites WHERE id = $1 AND used_at IS NULL RETURNING id"
 BUMP = (
-    f"INSERT INTO search_usage (user_id, day, count) VALUES ($1, {TODAY_SQL}, 1) "
+    f"INSERT INTO search_usage (user_id, day, count) VALUES ($1, {MONTH_SQL}, 1) "
     "ON CONFLICT (user_id, day) DO UPDATE SET count = search_usage.count + 1 "
     "WHERE search_usage.count < $2 RETURNING count"
 )
-USED_TODAY = (
+USED_PERIOD = (
     "SELECT COALESCE((SELECT count FROM search_usage "
-    f"WHERE user_id = $1 AND day = {TODAY_SQL}), 0)"
+    f"WHERE user_id = $1 AND day = {MONTH_SQL}), 0)"
 )
 USED_TOTAL = "SELECT COALESCE(sum(count), 0)::int FROM search_usage WHERE user_id = $1"
 NEW_REQUEST = (
@@ -122,15 +122,20 @@ DELIVERIES = (
     "FROM access_requests r LEFT JOIN invites i ON i.id = r.invite_id "
     "WHERE r.status IN ('approved', 'rejected') AND NOT r.notified ORDER BY r.id LIMIT 20"
 )
+STATS_BUMP = (
+    "INSERT INTO stats_daily (day, searches) VALUES ((now() AT TIME ZONE 'UTC')::date, 1) "
+    "ON CONFLICT (day) DO UPDATE SET searches = stats_daily.searches + 1"
+)
 MARK_NOTIFIED = "UPDATE access_requests SET notified = TRUE WHERE id = $1"
 LIST_USERS = (
-    f"SELECT u.id, u.username, {ROLE_SQL} AS role, u.role_until, u.tg_id, u.created_at, "
+    f"SELECT u.id, u.username, {ROLE_SQL} AS role, u.role_until, u.tg_id, u.blocked, u.created_at, "
     "COALESCE((SELECT count FROM search_usage s WHERE s.user_id = u.id "
-    f"AND s.day = {TODAY_SQL}), 0) AS today, "
+    f"AND s.day = {MONTH_SQL}), 0) AS used, "
     "COALESCE((SELECT sum(count) FROM search_usage s WHERE s.user_id = u.id), 0)::int AS total "
     "FROM users u ORDER BY u.id"
 )
 GET_USER = "SELECT id, role FROM users WHERE id = $1"
+SET_BLOCKED = "UPDATE users SET blocked = $2 WHERE id = $1"
 SET_ROLE = (
     "UPDATE users SET role = $2::text, role_until = CASE WHEN $2::text = 'vip' "
     "AND $3::int IS NOT NULL THEN now() + make_interval(days => $3::int) END WHERE id = $1"
@@ -308,6 +313,8 @@ async def login(username, password, ip):
     if not row or not ok:
         await record_fail(ip, name)
         raise AuthError("Неверный логин или пароль", 401)
+    if row["blocked"]:
+        raise AuthError("Аккаунт заблокирован", 403)
     await clear_fails(ip, name)
     await pool.execute(DROP_EXPIRED)
     async with pool.acquire() as conn:
@@ -333,20 +340,26 @@ async def user_by_tg(tg_id):
 
 
 async def consume(user):
+    if user.get("blocked"):
+        raise AuthError("Аккаунт заблокирован", 403)
     limit = limit_for(user["role"])
     used = await database.get_pool().fetchval(
         BUMP, user["id"], UNLIMITED if limit is None else limit
     )
     if used is None:
         raise AuthError(
-            f"Лимит на сегодня исчерпан ({limit}). Сброс в 00:00 UTC.", 429
+            f"Лимит на месяц исчерпан ({limit}). Сброс 1-го числа в 00:00 UTC.", 429
         )
+    try:
+        await database.get_pool().execute(STATS_BUMP)
+    except Exception:
+        pass
     return quota_info(user["role"], used)
 
 
 async def profile(user):
     pool = database.get_pool()
-    used = await pool.fetchval(USED_TODAY, user["id"])
+    used = await pool.fetchval(USED_PERIOD, user["id"])
     total = await pool.fetchval(USED_TOTAL, user["id"])
     return {
         **public_user(user),
@@ -413,7 +426,7 @@ async def create_request(tg_id, tg_username, message):
 async def request_status(tg_id):
     user = await user_by_tg(tg_id)
     if user:
-        used = await database.get_pool().fetchval(USED_TODAY, user["id"])
+        used = await database.get_pool().fetchval(USED_PERIOD, user["id"])
         return {"state": "account", "user": user, "quota": quota_info(user["role"], used)}
     row = await database.get_pool().fetchrow(LAST_REQUEST, tg_id)
     if row is None:
@@ -495,7 +508,7 @@ async def delete_user(user_id, acting_id):
 
 
 async def quota_now(user):
-    used = await database.get_pool().fetchval(USED_TODAY, user["id"])
+    used = await database.get_pool().fetchval(USED_PERIOD, user["id"])
     return quota_info(user["role"], used)
 
 
@@ -568,3 +581,18 @@ async def pending_for_admins():
 
 async def mark_admin_notified(request_id):
     await database.get_pool().execute(MARK_ADMIN_NOTIFIED, request_id)
+
+
+async def set_blocked(user_id, blocked, acting_id):
+    async with database.get_pool().acquire() as conn:
+        async with conn.transaction():
+            target = await conn.fetchrow(GET_USER, user_id)
+            if target is None:
+                raise AuthError("Пользователь не найден", 404)
+            if user_id == acting_id:
+                raise AuthError("Нельзя заблокировать самого себя")
+            if target["role"] == "admin":
+                raise AuthError("Админа нельзя заблокировать, сначала смените роль")
+            await conn.execute(SET_BLOCKED, user_id, blocked)
+            if blocked:
+                await conn.execute(DROP_USER_SESSIONS, user_id)
