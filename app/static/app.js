@@ -8,8 +8,9 @@ const STATUS = {
   unpacking: "распаковка",
   done: "готово",
   failed: "ошибка",
+  deleting: "удаление",
 };
-const BUSY = ["processing", "packing", "unpacking"];
+const BUSY = ["processing", "packing", "unpacking", "deleting"];
 const TABS = [
   { id: "search", label: "Поиск" },
   { id: "history", label: "История" },
@@ -18,6 +19,7 @@ const TABS = [
   { id: "requests", label: "Заявки", admin: true },
   { id: "invites", label: "Токены", admin: true },
   { id: "users", label: "Пользователи", admin: true },
+  { id: "stats", label: "Статистика", admin: true },
   { id: "audit", label: "Журнал", admin: true },
 ];
 
@@ -152,11 +154,11 @@ function renderQuota(quota) {
   const fill = $("quota-fill");
   fill.className = "bar-fill";
   if (quota.limit === null) {
-    text.textContent = "Запросов сегодня без ограничений";
+    text.textContent = "Запросов без ограничений";
     fill.style.width = "100%";
     return;
   }
-  text.textContent = `Запросов сегодня: ${quota.used} из ${quota.limit}`;
+  text.textContent = `Запросов в этом месяце: ${quota.used} из ${quota.limit}`;
   const ratio = quota.limit ? quota.used / quota.limit : 1;
   fill.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
   if (quota.remaining === 0) fill.classList.add("full");
@@ -185,6 +187,7 @@ function switchTab(id) {
     invites: [loadInvites, 0],
     users: [loadUsers, 0],
     audit: [() => loadAudit(true), 0],
+    stats: [loadStats, 0],
     history: [loadHistory, 0],
     profile: [renderProfile, 0],
     search: [loadSources, 0],
@@ -215,12 +218,12 @@ function highlight(text, list) {
   return frag;
 }
 
-function renderItem(item, list, title) {
+function renderItem(item, list, title, hidden) {
   const data = item.data || item;
   const card = el("div", "card");
   if (title) card.append(el("div", "card-title", title));
   for (const [k, v] of Object.entries(data)) {
-    if (v === null || v === "") continue;
+    if (v === null || v === "" || (hidden && hidden.has(k))) continue;
     const row = el("div", "row");
     row.append(el("b", "", `${k}: `), highlight(String(v), list));
     card.append(row);
@@ -228,9 +231,87 @@ function renderItem(item, list, title) {
   return card;
 }
 
-function showResults(nodes) {
-  $("results").replaceChildren(...nodes);
+function hiddenCols() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem("hiddenCols") || "[]"));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenCols(set) {
+  try {
+    localStorage.setItem("hiddenCols", JSON.stringify([...set]));
+  } catch {
+    return;
+  }
+}
+
+function columnsOf(items) {
+  const keys = [];
+  for (const item of items) {
+    for (const key of Object.keys(item.data || item)) if (!keys.includes(key)) keys.push(key);
+  }
+  return keys;
+}
+
+function sortedItems() {
+  const items = [...current.items];
+  const [field, dir] = $("sort").value.split(":");
+  if (!field) return items;
+  const sign = dir === "desc" ? -1 : 1;
+  const value = (item) => String((item.data || item)[field] ?? "");
+  return items.sort(
+    (x, y) => sign * value(x).localeCompare(value(y), "ru", { numeric: true })
+  );
+}
+
+function refreshTools() {
+  const keys = columnsOf(current.items);
+  const sort = $("sort");
+  const chosen = sort.value;
+  sort.replaceChildren(new Option("Как найдено", ""));
+  for (const key of keys) {
+    sort.append(new Option(`${key} А-Я`, `${key}:asc`), new Option(`${key} Я-А`, `${key}:desc`));
+  }
+  sort.value = [...sort.options].some((o) => o.value === chosen) ? chosen : "";
+  const hidden = hiddenCols();
+  $("cols-list").replaceChildren(
+    ...keys.map((key) => {
+      const label = el("label", "check");
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = !hidden.has(key);
+      box.addEventListener("change", () => {
+        const set = hiddenCols();
+        if (box.checked) set.delete(key);
+        else set.add(key);
+        saveHiddenCols(set);
+        drawResults();
+      });
+      label.append(box, ` ${key}`);
+      return label;
+    })
+  );
+}
+
+function drawResults() {
+  const items = sortedItems();
+  const hidden = hiddenCols();
+  $("results").replaceChildren(
+    ...(items.length
+      ? items.map((item) => renderItem(item, current.marks, "", hidden))
+      : [el("p", "empty", "Ничего не найдено")])
+  );
+  $("more").hidden = !current.more;
+  $("result-tools").hidden = !items.length;
+}
+
+function showMessage(node) {
+  current = null;
+  $("results").replaceChildren(node);
   $("more").hidden = true;
+  $("result-tools").hidden = true;
 }
 
 async function loadSources() {
@@ -246,7 +327,7 @@ async function loadSources() {
 async function runSearch(url, render) {
   const res = await api(url);
   if (!res.ok) {
-    showResults([el("p", "empty", detail(res))]);
+    showMessage(el("p", "empty", detail(res)));
     if (res.status === 429) refreshMe();
     return false;
   }
@@ -264,30 +345,31 @@ function searchUrl(state) {
 }
 
 async function startSearch(q, files) {
-  current = { q, files, offset: 0, searchId: null, marks: [], shown: 0 };
-  await runSearch(searchUrl(current), (data) => {
+  const next = { q, files, offset: 0, searchId: null, marks: [], items: [], more: false };
+  await runSearch(searchUrl(next), (data) => {
+    current = next;
     current.searchId = data.search_id;
     current.marks = data.marks || [];
-    current.shown = data.items.length;
-    showResults(
-      data.items.length
-        ? data.items.map((item) => renderItem(item, current.marks))
-        : [el("p", "empty", "Ничего не найдено")]
-    );
-    $("more").hidden = !data.more;
+    current.items = data.items;
+    current.more = data.more;
+    refreshTools();
+    drawResults();
   });
 }
 
 $("more").addEventListener("click", async () => {
   if (!current) return;
-  const next = { ...current, offset: current.shown };
+  const next = { ...current, offset: current.items.length };
   await runSearch(searchUrl(next), (data) => {
-    current.shown += data.items.length;
+    current.items = current.items.concat(data.items);
     current.marks = data.marks || current.marks;
-    $("results").append(...data.items.map((item) => renderItem(item, current.marks)));
-    $("more").hidden = !data.more;
+    current.more = data.more;
+    refreshTools();
+    drawResults();
   });
 });
+
+$("sort").addEventListener("change", () => current && drawResults());
 
 $("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -297,8 +379,97 @@ $("search-form").addEventListener("submit", (e) => {
 });
 
 $("lucky").addEventListener("click", () => {
-  current = null;
-  runSearch("/api/lucky", ({ item }) => showResults([renderItem(item, [], "Случайная запись")]));
+  runSearch("/api/lucky", ({ item }) => {
+    showMessage(renderItem(item, [], "Случайная запись", hiddenCols()));
+  });
+});
+
+async function download(url, name) {
+  const res = await fetch(url, { credentials: "same-origin" });
+  if (!res.ok) {
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+    toast((data && data.detail) || "Ошибка");
+    return;
+  }
+  saveBlob(await res.blob(), name);
+  refreshMe();
+}
+
+function saveBlob(blob, name) {
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+$("export").addEventListener("click", () => {
+  if (!current) return;
+  const params = new URLSearchParams({ q: current.q });
+  if (current.files) params.set("files", current.files);
+  if (current.searchId) params.set("search_id", String(current.searchId));
+  download(`/api/export?${params}`, "search.csv");
+});
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+let bulkRows = [];
+
+$("bulk-toggle").addEventListener("click", () => {
+  $("bulk").hidden = !$("bulk").hidden;
+});
+
+$("bulk-run").addEventListener("click", async () => {
+  const values = $("bulk-text").value.split("\n").map((v) => v.trim()).filter(Boolean);
+  if (!values.length) return;
+  const res = await api("/api/search/bulk", {
+    method: "POST",
+    json: { values, files: $("scope").value || null },
+  });
+  if (!res.ok) {
+    toast(detail(res));
+    if (res.status === 429) refreshMe();
+    return;
+  }
+  bulkRows = res.data.results;
+  renderQuota(res.data.quota);
+  refreshMe();
+  $("bulk-summary").textContent = `Найдено ${res.data.found} из ${bulkRows.length}`;
+  $("bulk-csv").hidden = false;
+  $("bulk-result").replaceChildren(
+    ...bulkRows.map((r) => {
+      const li = el("li", "item");
+      const info = el("div", "item-info");
+      info.append(el("div", "item-title", r.value));
+      if (r.item) {
+        const data = r.item.data || r.item;
+        const line = Object.values(data).filter((v) => v).join(" · ");
+        info.append(el("div", "item-sub detail", line));
+      }
+      const side = el("div", "item-side");
+      side.append(el("span", `badge ${r.found ? "vip" : ""}`, r.found ? "найдено" : "нет"));
+      li.append(info, side);
+      return li;
+    })
+  );
+});
+
+$("bulk-csv").addEventListener("click", () => {
+  const keys = columnsOf(bulkRows.filter((r) => r.item).map((r) => r.item));
+  const lines = [["value", "found", ...keys].map(csvCell).join(",")];
+  for (const r of bulkRows) {
+    const data = r.item ? r.item.data || r.item : {};
+    lines.push([r.value, r.found ? "yes" : "no", ...keys.map((k) => data[k] ?? "")].map(csvCell).join(","));
+  }
+  saveBlob(new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" }), "bulk.csv");
 });
 
 async function loadHistory() {
@@ -400,13 +571,27 @@ function renderFile(f) {
   bar.append(fill);
   li.append(head, bar);
 
-  if (f.status === "done") {
-    const actions = el("div", "actions");
-    const kind = f.packed ? "unpack" : "pack";
+  if (f.status === "done" || f.status === "failed") {
+    const actions = el("div", "toolbar actions");
+    if (f.status === "done") {
+      const kind = f.packed ? "unpack" : "pack";
+      actions.append(
+        button(f.packed ? "Распаковать" : "Сжать", "link", () =>
+          act(`/api/compress/files/${f.id}/${kind}`, { method: "POST" }, loadFiles)
+        )
+      );
+    } else {
+      actions.append(
+        button("Повторить", "link", () =>
+          act(`/api/files/${f.id}/retry`, { method: "POST" }, loadFiles)
+        )
+      );
+    }
     actions.append(
-      button(f.packed ? "Распаковать" : "Сжать", "link", () =>
-        act(`/api/compress/files/${f.id}/${kind}`, { method: "POST" }, loadFiles)
-      )
+      button("Удалить", "link", () => {
+        if (!confirm(`Удалить файл «${f.name}» и все его записи?`)) return;
+        act(`/api/files/${f.id}`, { method: "DELETE" }, loadFiles);
+      })
     );
     li.append(actions);
   }
@@ -612,7 +797,7 @@ async function loadUsers() {
         el(
           "div",
           "item-sub",
-          `сегодня ${u.today}, всего ${u.total}${u.role_until ? ` · до ${date(u.role_until)}` : ""}${u.tg_id ? " · Telegram привязан" : ""} · ${date(u.created_at)}`
+          `${u.blocked ? "заблокирован · " : ""}в этом месяце ${u.used}, всего ${u.total}${u.role_until ? ` · до ${date(u.role_until)}` : ""}${u.tg_id ? " · Telegram привязан" : ""} · ${date(u.created_at)}`
         )
       );
       const side = el("div", "item-side");
@@ -658,6 +843,18 @@ async function loadUsers() {
           if (data) prompt("Новый пароль, передайте пользователю:", data.password);
         })
       );
+      if (!own && u.role !== "admin") {
+        side.append(
+          button(u.blocked ? "Разблокировать" : "Заблокировать", "mini", async () => {
+            if (!u.blocked && !confirm(`Заблокировать ${u.username}? Его сессии закроются.`)) return;
+            const ok = await act(`/api/admin/users/${u.id}/block`, {
+              method: "POST",
+              json: { blocked: !u.blocked },
+            });
+            if (ok) loadUsers();
+          })
+        );
+      }
       if (!own) {
         side.append(
           button("Удалить", "mini danger", () => {
@@ -670,6 +867,58 @@ async function loadUsers() {
       li.append(info, side);
       return li;
     })
+  );
+}
+
+function statCard(label, value) {
+  const card = el("div", "stat");
+  card.append(el("div", "stat-value", String(value)), el("div", "stat-label", label));
+  return card;
+}
+
+function statRows(node, rows, empty) {
+  node.replaceChildren(
+    ...(rows.length
+      ? rows.map(([title, value]) => {
+          const li = el("li", "item");
+          li.append(el("div", "item-title", title), el("span", "state", String(value)));
+          return li;
+        })
+      : [el("li", "empty", empty)])
+  );
+}
+
+async function loadStats() {
+  const res = await api("/api/admin/stats");
+  if (!res.ok) return;
+  const d = res.data;
+  const roles = d.roles || {};
+  $("stat-cards").replaceChildren(
+    statCard("поисков сегодня", d.searches_today),
+    statCard("поисков за 30 дней", d.searches_30d),
+    statCard("пользователей", Object.values(roles).reduce((x, y) => x + y, 0)),
+    statCard("файлов", d.files.files),
+    statCard("записей", d.files.records),
+    statCard("размер базы", size(d.db_bytes))
+  );
+  const max = Math.max(1, ...d.per_day.map((p) => p.searches));
+  $("stat-chart").replaceChildren(
+    ...d.per_day.map((p) => {
+      const bar = el("div", "chart-bar");
+      bar.style.height = `${Math.max(2, Math.round((p.searches / max) * 100))}%`;
+      bar.title = `${p.day}: ${p.searches}`;
+      return bar;
+    })
+  );
+  statRows(
+    $("stat-queries"),
+    d.top_queries.map((q) => [q.query, q.n]),
+    "Пока нет запросов"
+  );
+  statRows(
+    $("stat-users"),
+    d.top_users.map((u) => [u.username, u.total]),
+    "Пока нет данных"
   );
 }
 
@@ -695,6 +944,11 @@ const ACTION = {
   reclaim: "освобождение места",
   autopack: "автосжатие",
   vocab_rebuilt: "словарь поиска",
+  file_retry: "повтор обработки",
+  file_deleted: "удаление файла",
+  file_recovered: "восстановление файла",
+  user_blocked: "блокировка",
+  user_unblocked: "разблокировка",
 };
 
 function auditRow(e) {

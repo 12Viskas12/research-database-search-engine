@@ -3,7 +3,7 @@ import json
 import asyncpg
 
 from app.core.config import settings
-from app.db.db_models import SCHEMA
+from app.db.db_models import MIGRATIONS
 
 _pool = None
 
@@ -26,10 +26,29 @@ async def init_pool():
     async with _pool.acquire() as conn:
         await conn.execute("SELECT pg_advisory_lock(7351)")
         try:
-            await conn.execute(SCHEMA)
+            await migrate(conn)
         finally:
             await conn.execute("SELECT pg_advisory_unlock(7351)")
     return _pool
+
+
+async def migrate(conn):
+    await conn.execute(
+        "CREATE TABLE IF NOT EXISTS schema_migrations ("
+        "version INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+        "applied_at TIMESTAMPTZ NOT NULL DEFAULT now())"
+    )
+    done = {r["version"] for r in await conn.fetch("SELECT version FROM schema_migrations")}
+    for version, name, sql in MIGRATIONS:
+        if version in done:
+            continue
+        async with conn.transaction():
+            await conn.execute(sql)
+            await conn.execute(
+                "INSERT INTO schema_migrations (version, name) VALUES ($1, $2)",
+                version,
+                name,
+            )
 
 
 def get_pool():
@@ -43,10 +62,22 @@ async def close_pool():
         _pool = None
 
 
-async def create_file(name, path=""):
+async def create_file(name, path="", sha256=None):
     return await _pool.fetchval(
-        "INSERT INTO files (name, path) VALUES ($1, $2) RETURNING id", name, path
+        "INSERT INTO files (name, path, sha256) VALUES ($1, $2, $3) RETURNING id",
+        name,
+        path,
+        sha256,
     )
+
+
+async def find_duplicate(sha256):
+    row = await _pool.fetchrow(
+        "SELECT id, name FROM files WHERE sha256 = $1 "
+        "AND status NOT IN ('failed', 'deleting') ORDER BY id LIMIT 1",
+        sha256,
+    )
+    return dict(row) if row else None
 
 
 async def get_file(file_id):
@@ -67,7 +98,7 @@ async def set_file_status(file_id, status, rows_count=None, error=None):
         "UPDATE files SET status = $2::text, rows_count = COALESCE($3, rows_count), "
         "error = $4, "
         "progress = CASE WHEN $2::text = 'done' THEN 100 "
-        "WHEN $2::text IN ('processing', 'packing', 'unpacking') THEN 0 "
+        "WHEN $2::text IN ('processing', 'packing', 'unpacking', 'pending') THEN 0 "
         "ELSE progress END "
         "WHERE id = $1",
         file_id,

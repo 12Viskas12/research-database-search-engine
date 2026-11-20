@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass, field
 
 from app.db import database
-from app.services import compression_service
+from app.services import compression_service, normalize
 
 WORD = compression_service.WORD
 FIELD = re.compile(r'(?<!\S)([^\W\d_][\w.-]+):(?:"([^"]+)"|([^\s"]+))')
@@ -73,7 +73,7 @@ def parse(raw, files=None):
         return " "
 
     text = FIELD.sub(take, raw or "")
-    text = " ".join(text.split())
+    text = normalize.query_text(" ".join(text.split()))
     terms = []
     for word in WORD.findall(text.lower()):
         if word not in terms:

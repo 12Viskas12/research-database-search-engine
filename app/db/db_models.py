@@ -141,3 +141,20 @@ CREATE TABLE IF NOT EXISTS tg_links (
     expires_at TIMESTAMPTZ NOT NULL
 );
 """
+
+FEATURES = """
+ALTER TABLE files ADD COLUMN IF NOT EXISTS sha256 TEXT;
+CREATE INDEX IF NOT EXISTS files_sha_idx ON files (sha256) WHERE sha256 IS NOT NULL;
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS blocked BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS stats_daily (
+    day DATE PRIMARY KEY,
+    searches INTEGER NOT NULL DEFAULT 0
+);
+"""
+
+MIGRATIONS = [
+    (1, "baseline", SCHEMA),
+    (2, "hash, blocking, stats", FEATURES),
+]

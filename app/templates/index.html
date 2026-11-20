@@ -57,6 +57,23 @@
           <select id="scope"><option value="">Все файлы</option></select>
           <span class="hint">Поле: город:Киев или имя:"Иван Петров". Можно с опечатками и частью данных.</span>
         </div>
+        <div class="toolbar">
+          <button type="button" id="bulk-toggle" class="link">Проверить список значений</button>
+        </div>
+        <div id="bulk" hidden>
+          <textarea id="bulk-text" rows="6" placeholder="По одному значению в строке, до 100"></textarea>
+          <div class="toolbar">
+            <button type="button" id="bulk-run" class="mini">Проверить</button>
+            <button type="button" id="bulk-csv" class="link" hidden>Скачать CSV</button>
+          </div>
+          <p id="bulk-summary" class="muted"></p>
+          <ul id="bulk-result" class="rows"></ul>
+        </div>
+        <div id="result-tools" class="filters" hidden>
+          <select id="sort"><option value="">Как найдено</option></select>
+          <details id="cols"><summary>Поля</summary><div id="cols-list"></div></details>
+          <button type="button" id="export" class="link">Скачать CSV</button>
+        </div>
         <div id="results"></div>
         <div class="toolbar"><button type="button" id="more" class="link" hidden>Показать еще</button></div>
       </section>
@@ -151,6 +168,17 @@
       <section data-tab="users" hidden>
         <h2>Пользователи</h2>
         <ul id="users" class="rows"></ul>
+      </section>
+
+      <section data-tab="stats" hidden>
+        <h2>Статистика</h2>
+        <div id="stat-cards" class="cards"></div>
+        <h2 class="gap">Поиски за 30 дней</h2>
+        <div id="stat-chart" class="chart"></div>
+        <h2 class="gap">Частые запросы</h2>
+        <ul id="stat-queries" class="rows"></ul>
+        <h2 class="gap">Активные пользователи</h2>
+        <ul id="stat-users" class="rows"></ul>
       </section>
 
       <section data-tab="audit" hidden>

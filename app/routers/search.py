@@ -1,9 +1,23 @@
+import asyncio
+import csv
+import io
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
+from pydantic import BaseModel
 
 from app.core.deps import current_user
 from app.services import auth_service, history_service, search_service
 
 router = APIRouter(prefix="/api")
+
+EXPORT_MAX = 5000
+BULK_MAX = 100
+
+
+class BulkBody(BaseModel):
+    values: list[str]
+    files: str | None = None
 
 
 def parse_files(value):
@@ -31,6 +45,64 @@ async def search(
             user["id"], q, ids, "web", len(result["items"])
         )
     return {**result, "quota": quota, "search_id": search_id}
+
+
+@router.get("/export")
+async def export(
+    q: str = Query(..., min_length=1, max_length=300),
+    files: str | None = None,
+    search_id: int | None = None,
+    user=Depends(current_user),
+):
+    ids = parse_files(files)
+    if not await history_service.valid(search_id, user["id"], q, ids):
+        await auth_service.consume(user)
+    result = await search_service.search(q, EXPORT_MAX, 0, ids)
+    columns = []
+    for item in result["items"]:
+        for key in item["data"]:
+            if key not in columns:
+                columns.append(key)
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(columns)
+    for item in result["items"]:
+        writer.writerow([item["data"].get(c, "") for c in columns])
+    body = "\ufeff" + out.getvalue()
+    return Response(
+        body.encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="search.csv"'},
+    )
+
+
+@router.post("/search/bulk")
+async def bulk(body: BulkBody, user=Depends(current_user)):
+    values = []
+    for value in body.values:
+        value = value.strip()[:200]
+        if value and value not in values:
+            values.append(value)
+    if not values:
+        raise HTTPException(400, "Список пуст")
+    if len(values) > BULK_MAX:
+        raise HTTPException(400, f"Не больше {BULK_MAX} значений за раз")
+    quota = await auth_service.consume(user)
+    ids = parse_files(body.files)
+    gate = asyncio.Semaphore(4)
+
+    async def one(value):
+        async with gate:
+            result = await search_service.search(value, 1, 0, ids)
+        item = result["items"][0] if result["items"] else None
+        return {"value": value, "found": item is not None, "item": item}
+
+    results = await asyncio.gather(*(one(v) for v in values))
+    return {
+        "results": results,
+        "found": sum(1 for r in results if r["found"]),
+        "quota": quota,
+    }
 
 
 @router.get("/sources")

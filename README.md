@@ -1,11 +1,115 @@
+<div align="center">
+
 # Research Database Search Engine
 
-![Python](https://img.shields.io/badge/Python-3.12-8b5cf6?style=flat-square&logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.110-8b5cf6?style=flat-square&logo=fastapi&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-8b5cf6?style=flat-square&logo=postgresql&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker-Compose-8b5cf6?style=flat-square&logo=docker&logoColor=white)
+**Drop in any data file. Search it in a blink. From the web, the API or Telegram.**
 
-Upload data files and search through them from a web page, a REST API or a Telegram bot.
+![Python](https://img.shields.io/badge/Python-3.12-8b5cf6?style=for-the-badge&logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.110-8b5cf6?style=for-the-badge&logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-8b5cf6?style=for-the-badge&logo=postgresql&logoColor=white)
+![Redis](https://img.shields.io/badge/Redis-7-8b5cf6?style=for-the-badge&logo=redis&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Compose-8b5cf6?style=for-the-badge&logo=docker&logoColor=white)
+
+[Quick start](#quick-start) · [Search](#search-that-forgives) · [Formats](#formats) · [Compression](#compression) · [Accounts](#accounts-and-roles) · [Bot](#telegram-bot) · [API](#api)
+
+</div>
+
+---
+
+## Features
+
+| | |
+| --- | --- |
+| **Eats everything** | 20+ formats: `csv` `xlsx` `pdf` `docx` `sql` `json` `xml` `html` `txt` and more |
+| **Cleans itself** | HTML tags, duplicates, empty rows and columns, messy headers |
+| **Forgiving search** | Typos, word beginnings, partial data, field filters |
+| **Compress and keep searching** | Pack or merge files, search still works on packed data |
+| **Telegram bot** | Search from your phone, approve access requests with one tap |
+| **Real accounts** | Roles, monthly quotas, VIP expiry, blocking, audit log, stats |
+| **Safe by default** | Daily backups, health checks, auto restart, JSON logs, migrations |
+| **Black and purple UI** | Minimal, fast, no frameworks |
+
+---
+
+## Quick start
+
+```bash
+git clone https://github.com/12Viskas12/research-database-search-engine.git
+cd research-database-search-engine
+docker compose up --build
+```
+
+Open [localhost:8000](http://localhost:8000). The first start creates an admin and prints the login:
+
+```bash
+docker compose logs app | grep ADMIN
+```
+
+The bot is optional. Put `BOT_TOKEN` into `.env` and start with the `bot` profile:
+
+```bash
+docker compose --profile bot up --build
+```
+
+<details>
+<summary><b>Configuration</b></summary>
+
+<br>
+
+Settings are read from `.env`, see `.env.example`.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `BOT_TOKEN` | none | Telegram bot token, the bot is off without it |
+| `SITE_URL` | `http://localhost:8000` | Link the bot sends with the token |
+| `ADMIN_USERNAME` | `admin` | First admin login |
+| `ADMIN_PASSWORD` | random | First admin password, printed in the logs if empty |
+| `QUOTA_USER` | `3` | Searches per month for the user role |
+| `QUOTA_VIP` | `50` | Searches per month for the vip role |
+| `DATABASE_URL` | `postgresql://postgres:postgres@db:5432/search` | PostgreSQL connection |
+| `REDIS_URL` | `redis://redis:6379` | Redis connection |
+| `UPLOAD_DIR` | `/data/uploads` | Where uploaded files are stored |
+| `LOG_LEVEL` | `INFO` | Log level |
+| `BACKUP_EVERY_HOURS` | `24` | Backup interval |
+| `BACKUP_KEEP` | `7` | How many backups to keep |
+
+</details>
+
+---
+
+## Search that forgives
+
+Search runs in stages. The first stage with results wins.
+
+| Stage | What it does | Example |
+| --- | --- | --- |
+| 1. Exact | All words match | `ivan petrenko` |
+| 2. Smart | Exact, prefix or typo (1 to 2 edits) per word | `ivn petrenk` |
+| 3. Substring | The whole query inside the text, digits included | `380442223` |
+| 4. Relaxed | 3+ words: at least half must match | `maria shevchenko 380000000000` |
+
+The last stage is the "name and surname, no phone" case: the phone is wrong or missing, the person is still found.
+
+**Filters**
+
+```text
+tester city:Kyiv              one field plus free text
+name:"Ivan Petrenko"          exact phrase in one field
+```
+
+Pick a file in the dropdown to search inside it only. Matches are highlighted, including the ones found through typos.
+
+**Show more** loads the next page of the same search and does not touch your monthly limit. Every account also gets a **search history** with a repeat button.
+
+---
+
+**Phones** are normalized: `+38 (050) 123-45-67`, `380501234567` and `0501234567` find each other. This applies to files uploaded after the update.
+
+**Results tools**
+
+- Sort by any field and hide fields you do not need, the choice is remembered.
+- **Download CSV** exports up to 5000 results of the current search, repeating the same search is free.
+- **Check a list** takes up to 100 values (one per line), tells which ones were found and exports the answer to CSV. One check counts as one search.
 
 ## Formats
 
@@ -16,109 +120,76 @@ Upload data files and search through them from a web page, a REST API or a Teleg
 | Documents | `pdf` `docx` `html` `htm` |
 | Text | `txt` `log` `md` `dat` and any other text file |
 
-SQL dumps are read from `INSERT` and `COPY` statements.
+SQL dumps are read from `INSERT` and `COPY` statements. Encodings like cp1251 are detected automatically.
 
-## Features
+---
 
-- Upload files in many formats, the type is detected automatically
-- Automatic cleaning: HTML tags, duplicates, empty rows and columns, column names
-- Background processing with a progress bar
-- Full-text search that tolerates typos, word beginnings and partial data
-- Filters by file and by field, "Show more" paging, per-user search history
-- Compression of single files or all files merged into one, search keeps working
-- Auto compression of old files
-- Accounts with roles, VIP expiry, password change and an audit log
-- Web interface, REST API and Telegram bot
+## Compression
 
-## Stack
-
-| Part | Tool |
-| --- | --- |
-| API and web | FastAPI, Jinja2 |
-| Database | PostgreSQL |
-| Queue | Redis, arq |
-| Bot | aiogram |
-| Cleaning | pandas |
-| Run | Docker Compose |
-
-## Quick start
+Rows are packed into blocks of 2000 and compressed with `bz2`, `zlib` or `lzma`. Every block has a tiny Bloom filter of its words, so search skips blocks that cannot match and unpacks only the rest. Results come from live and packed files together.
 
 ```bash
-git clone https://github.com/12Viskas12/research-database-search-engine.git
-cd research-database-search-engine
-docker compose up --build
+curl -b jar -X POST "localhost:8000/api/compress/files/1/pack?method=bz2"
+curl -b jar -X POST localhost:8000/api/compress/merge -H "Content-Type: application/json" -d '{"name": "all"}'
+curl -b jar -X POST localhost:8000/api/compress/reclaim
 ```
 
-Open [localhost:8000](http://localhost:8000). The first start creates an admin and prints the login in the logs:
+- **Pack** one file and unpack it back any time.
+- **Merge** many files into one packed file, each row keeps its `source_file`.
+- **Auto compression** packs files right after upload or after N days. The worker checks every 10 minutes. Set it in the Files tab.
+- **Delete** removes a file with all its records, **Retry** reruns a failed file, a file with the same content is rejected as a duplicate.
+- If the worker restarts in the middle of a task, interrupted files are restarted or marked automatically.
+- **Reclaim** returns disk space after packing and briefly locks the tables.
 
-```bash
-docker compose logs app | grep ADMIN
-```
+---
 
-The bot is optional. To run it, put `BOT_TOKEN` into `.env` and start with the `bot` profile:
-
-```bash
-docker compose --profile bot up --build
-```
-
-See `.env.example` for all settings.
-
-## Configuration
-
-Settings are read from `.env`.
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `BOT_TOKEN` | none | Telegram bot token, the bot is disabled without it |
-| `SITE_URL` | `http://localhost:8000` | Link the bot sends with the token |
-| `ADMIN_USERNAME` | `admin` | First admin login |
-| `ADMIN_PASSWORD` | random | First admin password, printed in the logs if empty |
-| `QUOTA_USER` | `5` | Searches per day for the user role |
-| `QUOTA_VIP` | `50` | Searches per day for the vip role |
-| `DATABASE_URL` | `postgresql://postgres:postgres@db:5432/search` | PostgreSQL connection |
-| `REDIS_URL` | `redis://redis:6379` | Redis connection |
-| `UPLOAD_DIR` | `/data/uploads` | Where uploaded files are stored |
-
-## Search
-
-Stages, the first one with results wins:
-
-1. All words match exactly.
-2. Every word matches exactly, by prefix or with a typo (one or two edits).
-3. The whole query is found as a substring, digits included.
-4. For queries with 3 or more words, at least half of the words match (name and surname without a phone, for example).
-
-Filters:
-
-- Pick a file in the list above the results.
-- Search one field with `city:Kyiv` or `name:"Ivan Petrenko"`. Several fields can be combined with free text.
-
-"Show more" loads the next page of the same search and does not use the daily limit. The word list for typos is built during upload. After an upgrade it is built automatically, or press "Update search words" in the Files tab.
-
-## Accounts
+## Accounts and roles
 
 Registration works only with a token.
 
-1. A person sends `/request` to the Telegram bot.
-2. The admin approves the request on the site as user or vip.
-3. The bot sends the token to the person.
-4. The person registers on the site with the token.
+```mermaid
+flowchart LR
+    A[Person sends /request to the bot] --> B[Admin gets a message with buttons]
+    B --> C{Approve?}
+    C -->|User or VIP| D[Bot sends a token]
+    C -->|Reject| E[Bot says no]
+    D --> F[Person registers on the site]
+```
 
-Without the bot the admin creates tokens directly in the Tokens tab.
+Without the bot the admin creates tokens in the Tokens tab.
 
-| Role | Searches per day | Access |
+| Role | Searches per month | Access |
 | --- | --- | --- |
-| user | 5 | search |
+| user | 3 | search |
 | vip | 50 | search |
-| admin | unlimited | search, files, compression, requests, tokens, users |
+| admin | unlimited | everything: files, compression, requests, tokens, users, log |
 
-The limit resets at 00:00 UTC. Each search and each "I'm feeling lucky" counts. Searches get a rank title: Новичок, Следопыт, Сыщик, Детектив, Шерлок.
+- The limit is per month and resets on the 1st at 00:00 UTC. Search and "I'm feeling lucky" both count.
+- VIP can have a term: 7, 30, 90, 365 days or forever. After that the account becomes a normal user.
+- Blocked users cannot log in or search, their sessions close at once. Admins cannot be blocked.
+- The **Stats** tab shows searches per day, top queries, active users and database size.
+- Ranks grow with every search: Новичок → Следопыт → Сыщик → Детектив → Шерлок.
+- Password change in the Profile tab closes other sessions. The admin can reset any password.
+- Failed logins are limited in Redis: 8 per login and address, 40 per address in 10 minutes.
+- The **Log** tab shows logins, role changes, uploads, compression and more, with filters.
 
-VIP can have a term (7, 30, 90, 365 days or forever) set on a token, on a request or on a user. When it ends the account becomes a normal user.
+---
 
-Every user can change the password in the Profile tab, other sessions are closed. The admin can reset any password in the Users tab. Failed logins are limited in Redis: 8 per login and address, 40 per address in 10 minutes.
+## Telegram bot
 
-The History tab shows the last searches of the account, including the ones from the bot. The Log tab (admin) lists logins, role changes, uploads, compression and other actions with filters.
+| Command | Action |
+| --- | --- |
+| `/request text` | Ask for access |
+| `/status` | Check the request or the account |
+| `/link CODE` | Link your account, the code is in the Profile tab |
+| `/id` | Show your Telegram ID |
+| any text | Search, the five best matches |
+
+The bot uses the same account and the same daily limit as the site.
+
+Admins with a linked Telegram get every new request in the chat with buttons: **User**, **VIP 30 days**, **VIP forever**, **Reject**. One tap and the token goes to the requester.
+
+---
 
 ## API
 
@@ -128,26 +199,29 @@ The History tab shows the last searches of the account, including the ones from 
 | `POST` | `/api/auth/login` | Log in |
 | `POST` | `/api/auth/logout` | Log out |
 | `GET` | `/api/auth/me` | Profile, quota and rank |
-| `GET` | `/api/search?q=text&limit=20&offset=0&files=1,2&search_id=5` | Search records |
-| `GET` | `/api/sources` | Files available for the filter |
-| `GET` | `/api/history` | Search history |
-| `DELETE` | `/api/history` | Clear search history |
 | `POST` | `/api/auth/password` | Change the password |
 | `POST` | `/api/auth/tg-code` | Code for linking Telegram |
 | `DELETE` | `/api/auth/tg` | Unlink Telegram |
+| `GET` | `/api/search?q=text&limit=20&offset=0&files=1,2&search_id=5` | Search records |
+| `GET` | `/api/sources` | Files available for the filter |
+| `GET` | `/api/export?q=text&files=1,2&search_id=5` | Results as CSV, up to 5000 rows |
+| `POST` | `/api/search/bulk` | Check a list of values, up to 100 |
+| `GET` | `/api/history` | Search history |
+| `DELETE` | `/api/history` | Clear search history |
 | `GET` | `/api/lucky` | Random record |
 | `POST` | `/api/files` | Upload a file, admin |
-| `GET` | `/api/files` | List files with status and progress, admin |
-| `GET` | `/api/files/{id}` | Get one file, admin |
-| `POST` | `/api/compress/files/{id}/pack?method=bz2` | Compress one file |
-| `POST` | `/api/compress/files/{id}/unpack` | Restore a compressed file |
-| `POST` | `/api/compress/merge` | Merge files into one compressed file |
-| `POST` | `/api/compress/reclaim` | Free disk space after compression |
-| `GET` | `/api/compress/stats` | Sizes before and after |
+| `DELETE` | `/api/files/{id}` | Delete a file with its records, admin |
+| `POST` | `/api/files/{id}/retry` | Rerun a failed file, admin |
+| `GET` | `/api/files` | Files with status and progress, admin |
+| `POST` | `/api/compress/files/{id}/pack` | Compress one file, admin |
+| `POST` | `/api/compress/files/{id}/unpack` | Restore a compressed file, admin |
+| `POST` | `/api/compress/merge` | Merge files into one, admin |
+| `POST` | `/api/compress/reclaim` | Free disk space, admin |
+| `GET` | `/api/compress/stats` | Sizes before and after, admin |
 
-Admin only: `/api/files`, `/api/compress/*` and `/api/admin/*` (requests, invites, users, password reset, audit, settings).
+Admin only: `/api/admin/*` for requests, tokens, users, blocking, password reset, audit log, stats and settings.
 
-Example:
+`GET /health` checks the database and Redis.
 
 ```bash
 curl -c jar -H "Content-Type: application/json" -d '{"username":"admin","password":"..."}' localhost:8000/api/auth/login
@@ -155,55 +229,73 @@ curl -b jar -F "file=@data.csv" localhost:8000/api/files
 curl -b jar "localhost:8000/api/search?q=Kyiv"
 ```
 
-## Compression
+---
 
-Rows are packed into blocks of 2000 and compressed with `bz2`, `zlib` or `lzma`. Every block has a small Bloom filter of its words, so search skips blocks that cannot match and unpacks only the rest. Results come from live and compressed files together.
+## Operations
+
+- **Backups.** The `backup` service dumps the database every 24 hours and keeps the last 7 files in the `backups` volume (`BACKUP_EVERY_HOURS`, `BACKUP_KEEP`). Restore:
 
 ```bash
-curl -b jar -X POST "localhost:8000/api/compress/files/1/pack?method=bz2"
-curl -b jar -X POST localhost:8000/api/compress/merge -H "Content-Type: application/json" -d '{"name": "all"}'
-curl -b jar -X POST localhost:8000/api/compress/reclaim
+docker compose cp backup:/backups/search-DATE.sql.gz .
+gunzip -c search-DATE.sql.gz | docker compose exec -T db psql -U postgres -d search
 ```
 
-Auto compression is set in the Files tab: right after upload or after a number of days. The worker checks every 10 minutes.
-
-Merge replaces the source files with one file, each row keeps its `source_file`. Disk space is returned after `reclaim`, which briefly locks the tables.
-
-## Telegram bot
-
-| Command | Action |
-| --- | --- |
-| `/request text` | Ask for access |
-| `/status` | Check the request or the account |
-| `/link CODE` | Link the account, the code is in the Profile tab |
-| `/id` | Show your Telegram ID |
-| any text | Search, the five best matches |
-
-Search in the bot uses the same account and the same daily limit as the site.
-
-Admins with a linked Telegram get every new request in the bot with buttons: user, VIP 30 days, VIP forever, reject. The token goes to the requester right after.
+- **Health.** `app` and `worker` have health checks, all services restart on failure.
+- **Logs.** JSON lines to stdout, level from `LOG_LEVEL`, Docker keeps 3 files of 10 MB per service.
+- **Migrations.** Schema changes are numbered in `app/db/db_models.py` and applied once at startup.
+- **CI.** GitHub Actions runs `ruff`, a syntax check and a Docker build on every push.
 
 ## How it works
 
-1. The file is saved and a job is added to the Redis queue.
-2. The worker reads the file with a parser and cleans the rows.
-3. Records are written to PostgreSQL in batches.
-4. Search runs on a `tsvector` index with a trigram word list for typos.
-
-## Project structure
-
+```mermaid
+flowchart LR
+    U[Upload] --> Q[Redis queue]
+    Q --> W[Worker]
+    W --> P[Parser]
+    P --> C[Cleaner]
+    C --> DB[(PostgreSQL)]
+    DB --> S[Search]
+    S --> WEB[Web]
+    S --> API[REST API]
+    S --> BOT[Telegram bot]
 ```
+
+1. The file is saved and a job goes to the Redis queue.
+2. The worker reads it with the right parser and cleans the rows.
+3. Records land in PostgreSQL in batches, with a progress bar in the UI.
+4. Search uses a `tsvector` index, trigram indexes and a word list for typos.
+
+| Part | Tool |
+| --- | --- |
+| API and web | FastAPI, Jinja2 |
+| Database | PostgreSQL, `pg_trgm` |
+| Queue | Redis, arq |
+| Bot | aiogram |
+| Cleaning | pandas |
+| Run | Docker Compose |
+
+<details>
+<summary><b>Project structure</b></summary>
+
+<br>
+
+```text
 app/
   core/        settings, Redis
   db/          connection pool, schema
   parsers/     one parser per format
-  routers/     files, search, pages
-  services/    cleaner, ingestion, search
+  routers/     auth, admin, files, compress, search, pages
+  services/    cleaner, ingestion, search, compression, accounts, audit, stats
+scripts/       database backup
   static/      css, js
   templates/   html
 bot/           Telegram bot
 workers/       background tasks
 ```
+
+</details>
+
+---
 
 ## License
 

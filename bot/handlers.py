@@ -14,7 +14,7 @@ ROLE_NAMES = {"user": "обычный", "vip": "VIP", "admin": "админ"}
 def quota_text(quota):
     if quota["limit"] is None:
         return "Запросов: без ограничений"
-    return f"Осталось запросов сегодня: {quota['remaining']} из {quota['limit']}"
+    return f"Осталось запросов в этом месяце: {quota['remaining']} из {quota['limit']}"
 
 
 @router.message(CommandStart())

@@ -4,6 +4,7 @@ import logging
 from aiogram import Bot, Dispatcher
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 
+from app.core import logs
 from app.core.config import settings
 from app.db import database
 from app.services import auth_service
@@ -55,6 +56,7 @@ async def notify_admins(bot):
 
 
 async def main():
+    logs.setup("bot")
     if not settings.bot_token:
         print("BOT_TOKEN is empty, bot is disabled", flush=True)
         return
