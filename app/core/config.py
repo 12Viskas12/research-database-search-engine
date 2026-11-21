@@ -8,9 +8,6 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379"
     bot_token: str = ""
     upload_dir: str = "/data/uploads"
-    inbox_dir: str = "/data/inbox"
-    backup_dir: str = "/backups"
-    metrics_token: str = ""
     site_url: str = "http://localhost:8000"
     admin_username: str = "admin"
     admin_password: str = ""
@@ -19,6 +16,8 @@ class Settings(BaseSettings):
     session_days: int = 14
     invite_hours: int = 72
     cookie_secure: bool = False
+    zip_max_files: int = 500
+    zip_max_bytes: int = 5 * 1024**3
 
 
 settings = Settings()

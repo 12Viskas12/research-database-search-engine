@@ -33,13 +33,10 @@ FROM files
 LUCKY_LIVE = """
 SELECT id, file_id, data FROM records
 WHERE id >= (SELECT floor(random() * COALESCE(max(id), 0))::bigint + 1 FROM records)
-AND NOT hidden
 ORDER BY id LIMIT 1
 """
 
-LUCKY_LIVE_FIRST = (
-    "SELECT id, file_id, data FROM records WHERE NOT hidden ORDER BY id LIMIT 1"
-)
+LUCKY_LIVE_FIRST = "SELECT id, file_id, data FROM records ORDER BY id LIMIT 1"
 
 LUCKY_BLOCK = """
 SELECT file_id, block_no, codec, payload FROM blocks
@@ -58,7 +55,6 @@ class Query:
     filters: list
     files: list
     groups: list = field(default_factory=list)
-    hidden: bool = False
 
 
 def like_pattern(value):
@@ -164,8 +160,7 @@ def build_stages(q):
 
 
 def live_filters(q, params):
-    params.append(q.hidden)
-    parts = [f"r.hidden = ${len(params)}"]
+    parts = []
     if q.files:
         params.append(q.files)
         parts.append(f"r.file_id = ANY(${len(params)}::int[])")
@@ -250,16 +245,15 @@ def packed_spec(q, stage):
 async def run_stage(conn, q, stage, need):
     sql, params = live_query(q, stage, need)
     items = [dict(r) for r in await conn.fetch(sql, *params)]
-    if len(items) < need and not q.hidden:
+    if len(items) < need:
         items += await compression_service.search_packed(
             conn, packed_spec(q, stage), q.files, need - len(items)
         )
     return items
 
 
-async def search(raw, limit=20, offset=0, files=None, hidden=False):
+async def search(raw, limit=20, offset=0, files=None):
     q = parse(raw, files)
-    q.hidden = hidden
     if not q.text and not q.filters:
         return {"items": [], "more": False, "marks": []}
     need = offset + limit + 1
