@@ -21,7 +21,7 @@ async def _init_conn(conn):
 async def init_pool():
     global _pool
     _pool = await asyncpg.create_pool(
-        settings.database_url, min_size=1, max_size=10, init=_init_conn
+        settings.database_url, min_size=1, max_size=24, init=_init_conn
     )
     async with _pool.acquire() as conn:
         await conn.execute("SELECT pg_advisory_lock(7351)")
