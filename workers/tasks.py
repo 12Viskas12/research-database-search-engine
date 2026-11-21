@@ -2,7 +2,13 @@ import os
 
 from app.db import database
 from app.parsers.factory import get_parser
-from app.services import audit_service, compression_service, settings_service, vocab_service
+from app.services import (
+    audit_service,
+    compression_service,
+    inbox_service,
+    settings_service,
+    vocab_service,
+)
 from app.services.ingestion_service import ingest
 
 INGEST_KEY = 7353
@@ -17,7 +23,7 @@ ORPHANS = (
     "SELECT id, status, packed, path FROM files "
     "WHERE status IN ('processing', 'packing', 'unpacking', 'deleting')"
 )
-INTERRUPTED = "Операция прервана перезапуском, запустите ее снова"
+INTERRUPTED = "Operation interrupted by a restart, run it again"
 
 
 async def autopack(file_id, method):
@@ -134,3 +140,9 @@ async def recover_one(queue, row):
     else:
         await database.set_file_status(file_id, "done", error=INTERRUPTED)
     await audit_service.log(None, "file_recovered", name="system", file=file_id, was=status)
+
+
+async def scan_inbox(ctx):
+    queue = ctx.get("redis")
+    if queue is not None:
+        await inbox_service.scan(queue)

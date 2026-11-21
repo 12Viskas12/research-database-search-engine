@@ -1,9 +1,18 @@
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from app.core.deps import admin_user
 from app.core.redis_client import get_redis
-from app.services import audit_service, auth_service, settings_service, stats_service
+from app.services import (
+    audit_service,
+    auth_service,
+    backup_service,
+    history_service,
+    record_service,
+    settings_service,
+    stats_service,
+)
 
 router = APIRouter(prefix="/api/admin", dependencies=[Depends(admin_user)])
 
@@ -25,6 +34,18 @@ class PasswordBody(BaseModel):
 
 class BlockBody(BaseModel):
     blocked: bool
+
+
+class RecordBody(BaseModel):
+    data: dict
+
+
+class HideBody(BaseModel):
+    hidden: bool
+
+
+class RestoreBody(BaseModel):
+    name: str
 
 
 class AutopackBody(BaseModel):
@@ -156,3 +177,59 @@ async def rebuild_vocab():
     redis = await get_redis()
     await redis.enqueue_job("rebuild_vocab")
     return {"status": "queued"}
+
+
+@router.patch("/records/{record_id}")
+async def edit_record(record_id: str, body: RecordBody, admin=Depends(admin_user)):
+    await record_service.edit(admin, record_id, body.data)
+    return {"ok": True}
+
+
+@router.post("/records/{record_id}/hide")
+async def hide_record(record_id: str, body: HideBody, admin=Depends(admin_user)):
+    await record_service.hide(admin, record_id, body.hidden)
+    return {"ok": True}
+
+
+@router.delete("/records/{record_id}")
+async def delete_record(record_id: str, admin=Depends(admin_user)):
+    await record_service.delete(admin, record_id)
+    return {"ok": True}
+
+
+@router.get("/missed")
+async def missed():
+    return await history_service.missed_top()
+
+
+@router.delete("/missed")
+async def clear_missed(admin=Depends(admin_user)):
+    await history_service.missed_clear()
+    await audit_service.log(admin, "missed_cleared")
+    return {"ok": True}
+
+
+@router.get("/backups")
+async def backups():
+    return backup_service.listing()
+
+
+@router.post("/backups", status_code=202)
+async def create_backup(admin=Depends(admin_user)):
+    backup_service.request_backup()
+    await audit_service.log(admin, "backup_requested")
+    return {"status": "queued"}
+
+
+@router.post("/backups/restore", status_code=202)
+async def restore_backup(body: RestoreBody, admin=Depends(admin_user)):
+    backup_service.request_restore(body.name)
+    await audit_service.log(admin, "backup_restore_requested", file=body.name)
+    return {"status": "queued"}
+
+
+@router.get("/backups/{name}")
+async def download_backup(name: str, admin=Depends(admin_user)):
+    path = backup_service.valid_name(name)
+    await audit_service.log(admin, "backup_downloaded", file=name)
+    return FileResponse(path, filename=name, media_type="application/gzip")
