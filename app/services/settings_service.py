@@ -20,9 +20,9 @@ async def autopack():
 
 async def set_autopack(enabled, days, method):
     if not 0 <= days <= 3650:
-        raise SettingsError("Days: 0 to 3650")
+        raise SettingsError("Дней: от 0 до 3650")
     if method not in compression_service.CODECS:
-        raise SettingsError("Unknown compression method")
+        raise SettingsError("Неизвестный метод сжатия")
     value = {"enabled": bool(enabled), "days": days, "method": method}
     await database.get_pool().execute(PUT, "autopack", value)
     return value

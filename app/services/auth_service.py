@@ -17,11 +17,11 @@ USERNAME = re.compile(r"^[A-Za-z0-9_.-]{3,32}$")
 ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 UNLIMITED = 2**31 - 1
 RANKS = (
-    (0, "newbie"),
-    (10, "tracker"),
-    (50, "sleuth"),
-    (200, "detective"),
-    (1000, "sherlock"),
+    (0, "Новичок"),
+    (10, "Следопыт"),
+    (50, "Сыщик"),
+    (200, "Детектив"),
+    (1000, "Шерлок"),
 )
 WINDOW = 600
 MAX_FAILS = 8
@@ -101,7 +101,7 @@ USED_PERIOD = (
 )
 USED_TOTAL = "SELECT COALESCE(sum(count), 0)::int FROM search_usage WHERE user_id = $1"
 NEW_REQUEST = (
-    "INSERT INTO access_requests (tg_id, tg_username, message, lang) VALUES ($1, $2, $3, $4) "
+    "INSERT INTO access_requests (tg_id, tg_username, message) VALUES ($1, $2, $3) "
     "ON CONFLICT (tg_id) WHERE status = 'pending' DO NOTHING RETURNING id"
 )
 LAST_REQUEST = (
@@ -118,7 +118,7 @@ DECIDE = (
     "UPDATE access_requests SET status = $2, invite_id = $3, decided_at = now() WHERE id = $1"
 )
 DELIVERIES = (
-    "SELECT r.id, r.tg_id, r.lang, r.status, i.token, i.role, i.role_days, i.expires_at "
+    "SELECT r.id, r.tg_id, r.status, i.token, i.role, i.role_days, i.expires_at "
     "FROM access_requests r LEFT JOIN invites i ON i.id = r.invite_id "
     "WHERE r.status IN ('approved', 'rejected') AND NOT r.notified ORDER BY r.id LIMIT 20"
 )
@@ -221,9 +221,9 @@ def check_days(role, days):
     if days in (None, 0):
         return None
     if role != "vip":
-        raise AuthError("Term is only for VIP")
+        raise AuthError("Срок задается только для VIP")
     if not isinstance(days, int) or not 1 <= days <= MAX_DAYS:
-        raise AuthError(f"Term: 1 to {MAX_DAYS} days")
+        raise AuthError(f"Срок: от 1 до {MAX_DAYS} дней")
     return days
 
 
@@ -262,9 +262,9 @@ async def clear_fails(ip, username):
 
 def validate_credentials(username, password):
     if not USERNAME.match(username):
-        raise AuthError("Username: 3 to 32 characters, latin letters, digits, _ . -")
+        raise AuthError("Логин: 3-32 символа, латиница, цифры, _ . -")
     if not 8 <= len(password) <= 128:
-        raise AuthError("Password: 8 to 128 characters")
+        raise AuthError("Пароль: от 8 до 128 символов")
 
 
 async def create_session(conn, user_id):
@@ -283,7 +283,7 @@ async def register(token, username, password):
             async with conn.transaction():
                 invite = await conn.fetchrow(CLAIM_INVITE, normalize_token(token))
                 if invite is None:
-                    raise AuthError("Token is invalid or expired")
+                    raise AuthError("Токен недействителен или истек")
                 user = await conn.fetchrow(
                     CREATE_USER,
                     username,
@@ -296,15 +296,15 @@ async def register(token, username, password):
                 session = await create_session(conn, user["id"])
     except asyncpg.UniqueViolationError as e:
         if "tg" in (e.constraint_name or ""):
-            raise AuthError("This Telegram is already linked to another account")
-        raise AuthError("Username is already taken")
+            raise AuthError("Этот Telegram уже привязан к другому аккаунту")
+        raise AuthError("Логин уже занят")
     return public_user(user), session
 
 
 async def login(username, password, ip):
     name = (username or "").strip().lower()
     if await throttled(ip, name):
-        raise AuthError("Too many attempts, wait a few minutes", 429)
+        raise AuthError("Слишком много попыток, подождите несколько минут", 429)
     pool = database.get_pool()
     row = await pool.fetchrow(USER_BY_NAME, (username or "").strip())
     ok = await asyncio.to_thread(
@@ -312,9 +312,9 @@ async def login(username, password, ip):
     )
     if not row or not ok:
         await record_fail(ip, name)
-        raise AuthError("Wrong username or password", 401)
+        raise AuthError("Неверный логин или пароль", 401)
     if row["blocked"]:
-        raise AuthError("Account is blocked", 403)
+        raise AuthError("Аккаунт заблокирован", 403)
     await clear_fails(ip, name)
     await pool.execute(DROP_EXPIRED)
     async with pool.acquire() as conn:
@@ -341,14 +341,14 @@ async def user_by_tg(tg_id):
 
 async def consume(user):
     if user.get("blocked"):
-        raise AuthError("Account is blocked", 403)
+        raise AuthError("Аккаунт заблокирован", 403)
     limit = limit_for(user["role"])
     used = await database.get_pool().fetchval(
         BUMP, user["id"], UNLIMITED if limit is None else limit
     )
     if used is None:
         raise AuthError(
-            f"Monthly limit reached ({limit}). Resets on the 1st at 00:00 UTC.", 429
+            f"Лимит на месяц исчерпан ({limit}). Сброс 1-го числа в 00:00 UTC.", 429
         )
     try:
         await database.get_pool().execute(STATS_BUMP)
@@ -389,7 +389,7 @@ async def bootstrap_admin():
 
 async def create_invite(role, note, admin_id, tg_id=None, conn=None, days=None):
     if role not in ROLES:
-        raise AuthError("Unknown role")
+        raise AuthError("Неизвестная роль")
     days = check_days(role, days)
     runner = conn or database.get_pool()
     row = await runner.fetchrow(
@@ -411,18 +411,14 @@ async def list_invites():
 
 async def delete_invite(invite_id):
     if await database.get_pool().fetchval(DELETE_INVITE, invite_id) is None:
-        raise AuthError("Token not found or already used", 404)
+        raise AuthError("Токен не найден или уже использован", 404)
 
 
-async def create_request(tg_id, tg_username, message, lang="uk"):
+async def create_request(tg_id, tg_username, message):
     if await user_by_tg(tg_id):
         return "account"
     created = await database.get_pool().fetchval(
-        NEW_REQUEST,
-        tg_id,
-        tg_username,
-        (message or "").strip()[:200] or None,
-        lang if lang in ("uk", "en") else "uk",
+        NEW_REQUEST, tg_id, tg_username, (message or "").strip()[:200] or None
     )
     return "created" if created else "pending"
 
@@ -444,18 +440,18 @@ async def list_requests():
 
 async def approve_request(request_id, role, admin_id, days=None):
     if role not in REQUEST_ROLES:
-        raise AuthError("A request can only give the user or vip role")
+        raise AuthError("По заявке можно выдать только роль user или vip")
     days = check_days(role, days)
     async with database.get_pool().acquire() as conn:
         async with conn.transaction():
             row = await conn.fetchrow(GET_REQUEST, request_id)
             if row is None:
-                raise AuthError("Request not found", 404)
+                raise AuthError("Заявка не найдена", 404)
             if row["status"] != "pending":
-                raise AuthError("Request is already handled", 409)
+                raise AuthError("Заявка уже обработана", 409)
             who = f"@{row['tg_username']}" if row["tg_username"] else str(row["tg_id"])
             invite = await create_invite(
-                role, f"request #{request_id} {who}", admin_id, row["tg_id"], conn, days
+                role, f"заявка #{request_id} {who}", admin_id, row["tg_id"], conn, days
             )
             await conn.execute(DECIDE, request_id, "approved", invite["id"])
     return invite
@@ -466,9 +462,9 @@ async def reject_request(request_id):
         async with conn.transaction():
             row = await conn.fetchrow(GET_REQUEST, request_id)
             if row is None:
-                raise AuthError("Request not found", 404)
+                raise AuthError("Заявка не найдена", 404)
             if row["status"] != "pending":
-                raise AuthError("Request is already handled", 409)
+                raise AuthError("Заявка уже обработана", 409)
             await conn.execute(DECIDE, request_id, "rejected", None)
 
 
@@ -487,16 +483,16 @@ async def list_users():
 async def guard_admin(conn, user_id, acting_id):
     target = await conn.fetchrow(GET_USER, user_id)
     if target is None:
-        raise AuthError("User not found", 404)
+        raise AuthError("Пользователь не найден", 404)
     if user_id == acting_id:
-        raise AuthError("You cannot change or delete yourself")
+        raise AuthError("Нельзя менять или удалять самого себя")
     if target["role"] == "admin" and await conn.fetchval(COUNT_ADMINS) <= 1:
-        raise AuthError("You cannot remove the last admin")
+        raise AuthError("Нельзя убрать последнего админа")
 
 
 async def set_role(user_id, role, acting_id, days=None):
     if role not in ROLES:
-        raise AuthError("Unknown role")
+        raise AuthError("Неизвестная роль")
     days = check_days(role, days)
     async with database.get_pool().acquire() as conn:
         async with conn.transaction():
@@ -519,11 +515,11 @@ async def quota_now(user):
 async def change_password(user, current, new, token):
     new = new or ""
     if not 8 <= len(new) <= 128:
-        raise AuthError("Password: 8 to 128 characters")
+        raise AuthError("Пароль: от 8 до 128 символов")
     pool = database.get_pool()
     stored = await pool.fetchval(USER_PASS, user["id"])
     if not await asyncio.to_thread(check_password, current or "", stored or DUMMY_HASH):
-        raise AuthError("Current password is wrong", 403)
+        raise AuthError("Текущий пароль неверный", 403)
     pass_hash = await asyncio.to_thread(hash_password, new)
     async with pool.acquire() as conn:
         async with conn.transaction():
@@ -534,12 +530,12 @@ async def change_password(user, current, new, token):
 async def reset_password(user_id, new=None):
     new = new or secrets.token_urlsafe(9)
     if not 8 <= len(new) <= 128:
-        raise AuthError("Password: 8 to 128 characters")
+        raise AuthError("Пароль: от 8 до 128 символов")
     pass_hash = await asyncio.to_thread(hash_password, new)
     async with database.get_pool().acquire() as conn:
         async with conn.transaction():
             if await conn.fetchval(GET_USER, user_id) is None:
-                raise AuthError("User not found", 404)
+                raise AuthError("Пользователь не найден", 404)
             await conn.execute(SET_PASS, user_id, pass_hash)
             await conn.execute(DROP_USER_SESSIONS, user_id)
     return new
@@ -561,13 +557,13 @@ async def link_tg(code, tg_id):
             async with conn.transaction():
                 user_id = await conn.fetchval(CLAIM_LINK, code)
                 if user_id is None:
-                    raise AuthError("Code is invalid or expired")
+                    raise AuthError("Код недействителен или истек")
                 await conn.execute(SET_TG, user_id, tg_id)
                 row = await conn.fetchrow(
                     f"SELECT {USER_COLS} FROM users u WHERE u.id = $1", user_id
                 )
     except asyncpg.UniqueViolationError:
-        raise AuthError("This Telegram is already linked to another account")
+        raise AuthError("Этот Telegram уже привязан к другому аккаунту")
     return dict(row)
 
 
@@ -592,11 +588,11 @@ async def set_blocked(user_id, blocked, acting_id):
         async with conn.transaction():
             target = await conn.fetchrow(GET_USER, user_id)
             if target is None:
-                raise AuthError("User not found", 404)
+                raise AuthError("Пользователь не найден", 404)
             if user_id == acting_id:
-                raise AuthError("You cannot block yourself")
+                raise AuthError("Нельзя заблокировать самого себя")
             if target["role"] == "admin":
-                raise AuthError("An admin cannot be blocked, change the role first")
+                raise AuthError("Админа нельзя заблокировать, сначала смените роль")
             await conn.execute(SET_BLOCKED, user_id, blocked)
             if blocked:
                 await conn.execute(DROP_USER_SESSIONS, user_id)
