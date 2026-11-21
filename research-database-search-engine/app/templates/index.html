@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Поиск по данным</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main>
+    <header class="top">
+      <h1>Поиск по данным</h1>
+      <div id="me" class="me" hidden>
+        <div class="me-main">
+          <span id="me-name" class="me-name"></span>
+          <span id="me-role" class="badge"></span>
+          <button type="button" id="logout" class="link">Выйти</button>
+        </div>
+        <div id="me-rank" class="me-rank"></div>
+      </div>
+    </header>
+
+    <section id="auth" hidden>
+      <div class="tabs">
+        <button type="button" class="tab active" data-auth="login">Вход</button>
+        <button type="button" class="tab" data-auth="register">Регистрация</button>
+      </div>
+      <form id="login-form" class="stack">
+        <input type="text" id="login-name" placeholder="Логин" autocomplete="username" required>
+        <input type="password" id="login-pass" placeholder="Пароль" autocomplete="current-password" required>
+        <button type="submit">Войти</button>
+      </form>
+      <form id="register-form" class="stack" hidden>
+        <input type="text" id="reg-token" placeholder="Токен: XXXX-XXXX-XXXX" autocomplete="off" required>
+        <input type="text" id="reg-name" placeholder="Придумайте логин" autocomplete="username" required>
+        <input type="password" id="reg-pass" placeholder="Пароль, от 8 символов" autocomplete="new-password" required>
+        <button type="submit">Создать аккаунт</button>
+      </form>
+      <p class="muted">Токен выдает админ. Запросить доступ можно в Telegram-боте командой /request.</p>
+    </section>
+
+    <div id="app" hidden>
+      <nav id="nav" class="tabs" hidden></nav>
+
+      <section data-tab="search">
+        <h2>Поиск</h2>
+        <div class="quota">
+          <div id="quota-text" class="quota-text"></div>
+          <div class="bar"><div id="quota-fill" class="bar-fill"></div></div>
+        </div>
+        <form id="search-form">
+          <input type="search" id="query" placeholder="Запрос" required>
+          <button type="submit">Найти</button>
+          <button type="button" id="lucky" class="ghost">Мне повезет</button>
+        </form>
+        <div class="filters">
+          <select id="scope"><option value="">Все файлы</option></select>
+          <span class="hint">Поле: город:Киев или имя:"Иван Петров". Можно с опечатками и частью данных.</span>
+        </div>
+        <div class="toolbar">
+          <button type="button" id="bulk-toggle" class="link">Проверить список значений</button>
+        </div>
+        <div id="bulk" hidden>
+          <textarea id="bulk-text" rows="6" placeholder="По одному значению в строке, до 100"></textarea>
+          <div class="toolbar">
+            <button type="button" id="bulk-run" class="mini">Проверить</button>
+            <button type="button" id="bulk-csv" class="link" hidden>Скачать CSV</button>
+          </div>
+          <p id="bulk-summary" class="muted"></p>
+          <ul id="bulk-result" class="rows"></ul>
+        </div>
+        <div id="result-tools" class="filters" hidden>
+          <select id="sort"><option value="">Как найдено</option></select>
+          <details id="cols"><summary>Поля</summary><div id="cols-list"></div></details>
+          <button type="button" id="export" class="link">Скачать CSV</button>
+        </div>
+        <div id="results"></div>
+        <div class="toolbar"><button type="button" id="more" class="link" hidden>Показать еще</button></div>
+      </section>
+
+      <section data-tab="history" hidden>
+        <h2>История поиска</h2>
+        <div class="toolbar"><button type="button" id="history-clear" class="link">Очистить</button></div>
+        <ul id="history" class="rows"></ul>
+      </section>
+
+      <section data-tab="profile" hidden>
+        <h2>Пароль</h2>
+        <form id="password-form" class="stack">
+          <input type="password" id="pw-current" placeholder="Текущий пароль" autocomplete="current-password" required>
+          <input type="password" id="pw-new" placeholder="Новый пароль, от 8 символов" autocomplete="new-password" required>
+          <button type="submit">Сменить пароль</button>
+        </form>
+        <p class="muted">После смены остальные сессии завершатся.</p>
+        <h2 class="gap">Telegram</h2>
+        <div id="tg-box"></div>
+      </section>
+
+      <section data-tab="files" hidden>
+        <h2>Загрузка файла или архива (zip, tar, gz, bz2, xz, 7z)</h2>
+        <form id="upload-form">
+          <input type="file" id="file" required>
+          <button type="submit">Загрузить</button>
+        </form>
+        <div class="toolbar">
+          <button type="button" id="merge-all" class="link">Объединить все в одну</button>
+          <button type="button" id="reclaim" class="link">Освободить место</button>
+        </div>
+        <p id="stats" class="muted"></p>
+        <form id="autopack-form" class="autopack">
+          <label class="check"><input type="checkbox" id="ap-enabled"> Автосжатие</label>
+          <span class="muted-inline">через</span>
+          <select id="ap-days">
+            <option value="0">сразу после загрузки</option>
+            <option value="1">1 день</option>
+            <option value="7">7 дней</option>
+            <option value="30">30 дней</option>
+            <option value="90">90 дней</option>
+          </select>
+          <select id="ap-method">
+            <option value="bz2">bz2</option>
+            <option value="lzma">lzma</option>
+            <option value="zlib">zlib</option>
+          </select>
+          <button type="submit" class="mini">Сохранить</button>
+        </form>
+        <div class="toolbar"><button type="button" id="vocab-rebuild" class="link">Обновить словарь поиска</button></div>
+        <ul id="files"></ul>
+      </section>
+
+      <section data-tab="requests" hidden>
+        <h2>Заявки из бота</h2>
+        <div class="toolbar term">
+          <span class="muted-inline">Срок VIP при одобрении</span>
+          <select id="req-days">
+            <option value="">Навсегда</option>
+            <option value="7">7 дней</option>
+            <option value="30">30 дней</option>
+            <option value="90">90 дней</option>
+            <option value="365">365 дней</option>
+          </select>
+        </div>
+        <ul id="requests" class="rows"></ul>
+      </section>
+
+      <section data-tab="invites" hidden>
+        <h2>Токены регистрации</h2>
+        <form id="invite-form">
+          <select id="invite-role">
+            <option value="user">Обычный</option>
+            <option value="vip">VIP</option>
+            <option value="admin">Админ</option>
+          </select>
+          <select id="invite-days" title="Срок VIP">
+            <option value="">Навсегда</option>
+            <option value="7">7 дней</option>
+            <option value="30">30 дней</option>
+            <option value="90">90 дней</option>
+            <option value="365">365 дней</option>
+          </select>
+          <input type="text" id="invite-note" placeholder="Заметка, например имя" maxlength="200">
+          <button type="submit">Создать токен</button>
+        </form>
+        <div id="new-token" class="token-box" hidden></div>
+        <ul id="invites" class="rows"></ul>
+      </section>
+
+      <section data-tab="users" hidden>
+        <h2>Пользователи</h2>
+        <ul id="users" class="rows"></ul>
+      </section>
+
+      <section data-tab="stats" hidden>
+        <h2>Статистика</h2>
+        <div id="stat-cards" class="cards"></div>
+        <h2 class="gap">Поиски за 30 дней</h2>
+        <div id="stat-chart" class="chart"></div>
+        <h2 class="gap">Частые запросы</h2>
+        <ul id="stat-queries" class="rows"></ul>
+        <h2 class="gap">Активные пользователи</h2>
+        <ul id="stat-users" class="rows"></ul>
+      </section>
+
+      <section data-tab="audit" hidden>
+        <h2>Журнал</h2>
+        <form id="audit-form">
+          <select id="audit-action"><option value="">Все действия</option></select>
+          <input type="text" id="audit-actor" placeholder="Кто" maxlength="64">
+          <button type="submit">Показать</button>
+        </form>
+        <ul id="audit" class="rows"></ul>
+        <div class="toolbar"><button type="button" id="audit-more" class="link" hidden>Еще</button></div>
+      </section>
+    </div>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>
