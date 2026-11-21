@@ -1,198 +1,260 @@
 <!doctype html>
-<html lang="ru">
+<html lang="uk">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Поиск по данным</title>
+  <title>Research Search</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%238b5cf6'/%3E%3Ccircle cx='14' cy='14' r='6' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='M19 19l6 6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <main>
-    <header class="top">
-      <h1>Поиск по данным</h1>
-      <div id="me" class="me" hidden>
-        <div class="me-main">
+  <header class="top">
+    <div class="top-in">
+      <a class="brand" href="/">
+        <span class="logo" aria-hidden="true"></span>
+        <span class="brand-name" data-i18n="title"></span>
+      </a>
+      <div class="top-side">
+        <div class="lang" role="group" aria-label="Language">
+          <button type="button" class="lang-btn" data-lang="uk">UA</button>
+          <button type="button" class="lang-btn" data-lang="en">EN</button>
+        </div>
+        <div id="me" class="me" hidden>
           <span id="me-name" class="me-name"></span>
           <span id="me-role" class="badge"></span>
-          <button type="button" id="logout" class="link">Выйти</button>
+          <button type="button" id="logout" class="link" data-i18n="logout"></button>
         </div>
-        <div id="me-rank" class="me-rank"></div>
       </div>
-    </header>
+    </div>
+  </header>
 
-    <section id="auth" hidden>
-      <div class="tabs">
-        <button type="button" class="tab active" data-auth="login">Вход</button>
-        <button type="button" class="tab" data-auth="register">Регистрация</button>
+  <main>
+    <section id="auth" class="auth" hidden>
+      <div class="auth-card">
+        <h1 data-i18n="auth_title"></h1>
+        <p class="lead" data-i18n="auth_lead"></p>
+        <div class="seg">
+          <button type="button" class="seg-btn active" data-auth="login" data-i18n="login"></button>
+          <button type="button" class="seg-btn" data-auth="register" data-i18n="register"></button>
+        </div>
+        <form id="login-form" class="stack">
+          <input type="text" id="login-name" data-i18n-ph="username" autocomplete="username" required>
+          <input type="password" id="login-pass" data-i18n-ph="password" autocomplete="current-password" required>
+          <button type="submit" data-i18n="sign_in"></button>
+        </form>
+        <form id="register-form" class="stack" hidden>
+          <input type="text" id="reg-token" data-i18n-ph="reg_token" autocomplete="off" required>
+          <input type="text" id="reg-name" data-i18n-ph="reg_name" autocomplete="username" required>
+          <input type="password" id="reg-pass" data-i18n-ph="reg_pass" autocomplete="new-password" required>
+          <button type="submit" data-i18n="create_account"></button>
+        </form>
+        <p class="muted" data-i18n="auth_hint"></p>
       </div>
-      <form id="login-form" class="stack">
-        <input type="text" id="login-name" placeholder="Логин" autocomplete="username" required>
-        <input type="password" id="login-pass" placeholder="Пароль" autocomplete="current-password" required>
-        <button type="submit">Войти</button>
-      </form>
-      <form id="register-form" class="stack" hidden>
-        <input type="text" id="reg-token" placeholder="Токен: XXXX-XXXX-XXXX" autocomplete="off" required>
-        <input type="text" id="reg-name" placeholder="Придумайте логин" autocomplete="username" required>
-        <input type="password" id="reg-pass" placeholder="Пароль, от 8 символов" autocomplete="new-password" required>
-        <button type="submit">Создать аккаунт</button>
-      </form>
-      <p class="muted">Токен выдает админ. Запросить доступ можно в Telegram-боте командой /request.</p>
     </section>
 
     <div id="app" hidden>
-      <nav id="nav" class="tabs" hidden></nav>
+      <nav id="nav" class="nav" hidden></nav>
 
-      <section data-tab="search">
-        <h2>Поиск</h2>
+      <section data-tab="search" class="page">
+        <form id="search-form" class="hero">
+          <div class="hero-box">
+            <input type="search" id="query" data-i18n-ph="query" autocomplete="off" required>
+            <button type="submit" data-i18n="find"></button>
+          </div>
+          <div class="hero-row">
+            <select id="scope"></select>
+            <button type="button" id="lucky" class="ghost" data-i18n="lucky"></button>
+            <button type="button" id="bulk-toggle" class="ghost" data-i18n="bulk_toggle"></button>
+            <label id="hidden-box" class="check" hidden><input type="checkbox" id="show-hidden"> <span data-i18n="show_hidden"></span></label>
+          </div>
+          <p class="hint" data-i18n="search_hint"></p>
+        </form>
+
         <div class="quota">
-          <div id="quota-text" class="quota-text"></div>
+          <div class="quota-top">
+            <span id="quota-text" class="quota-text"></span>
+            <span id="me-rank" class="me-rank"></span>
+          </div>
           <div class="bar"><div id="quota-fill" class="bar-fill"></div></div>
         </div>
-        <form id="search-form">
-          <input type="search" id="query" placeholder="Запрос" required>
-          <button type="submit">Найти</button>
-          <button type="button" id="lucky" class="ghost">Мне повезет</button>
-        </form>
-        <div class="filters">
-          <select id="scope"><option value="">Все файлы</option></select>
-          <span class="hint">Поле: город:Киев или имя:"Иван Петров". Можно с опечатками и частью данных.</span>
-        </div>
-        <div class="toolbar">
-          <button type="button" id="bulk-toggle" class="link">Проверить список значений</button>
-        </div>
-        <div id="bulk" hidden>
-          <textarea id="bulk-text" rows="6" placeholder="По одному значению в строке, до 100"></textarea>
+
+        <div id="bulk" class="panel" hidden>
+          <textarea id="bulk-text" rows="6" data-i18n-ph="bulk_ph"></textarea>
           <div class="toolbar">
-            <button type="button" id="bulk-run" class="mini">Проверить</button>
-            <button type="button" id="bulk-csv" class="link" hidden>Скачать CSV</button>
+            <button type="button" id="bulk-run" class="mini" data-i18n="bulk_run"></button>
+            <button type="button" id="bulk-csv" class="link" data-i18n="csv" hidden></button>
           </div>
           <p id="bulk-summary" class="muted"></p>
           <ul id="bulk-result" class="rows"></ul>
         </div>
-        <div id="result-tools" class="filters" hidden>
-          <select id="sort"><option value="">Как найдено</option></select>
-          <details id="cols"><summary>Поля</summary><div id="cols-list"></div></details>
-          <button type="button" id="export" class="link">Скачать CSV</button>
+
+        <div id="result-tools" class="tools" hidden>
+          <span id="result-count" class="muted-inline"></span>
+          <select id="sort"></select>
+          <details id="cols"><summary data-i18n="fields"></summary><div id="cols-list"></div></details>
+          <button type="button" id="export" class="link" data-i18n="csv"></button>
         </div>
-        <div id="results"></div>
-        <div class="toolbar"><button type="button" id="more" class="link" hidden>Показать еще</button></div>
+        <div id="results" class="results"></div>
+        <div class="toolbar center"><button type="button" id="more" class="ghost" data-i18n="more" hidden></button></div>
       </section>
 
-      <section data-tab="history" hidden>
-        <h2>История поиска</h2>
-        <div class="toolbar"><button type="button" id="history-clear" class="link">Очистить</button></div>
+      <section data-tab="history" class="page" hidden>
+        <div class="head"><h2 data-i18n="tab_history"></h2><button type="button" id="history-clear" class="link" data-i18n="clear"></button></div>
         <ul id="history" class="rows"></ul>
       </section>
 
-      <section data-tab="profile" hidden>
-        <h2>Пароль</h2>
-        <form id="password-form" class="stack">
-          <input type="password" id="pw-current" placeholder="Текущий пароль" autocomplete="current-password" required>
-          <input type="password" id="pw-new" placeholder="Новый пароль, от 8 символов" autocomplete="new-password" required>
-          <button type="submit">Сменить пароль</button>
-        </form>
-        <p class="muted">После смены остальные сессии завершатся.</p>
-        <h2 class="gap">Telegram</h2>
-        <div id="tg-box"></div>
+      <section data-tab="profile" class="page" hidden>
+        <div class="grid2">
+          <div class="panel">
+            <h2 data-i18n="password_title"></h2>
+            <form id="password-form" class="stack">
+              <input type="password" id="pw-current" data-i18n-ph="pw_current" autocomplete="current-password" required>
+              <input type="password" id="pw-new" data-i18n-ph="pw_new" autocomplete="new-password" required>
+              <button type="submit" data-i18n="pw_change"></button>
+            </form>
+            <p class="muted" data-i18n="pw_note"></p>
+          </div>
+          <div class="panel">
+            <h2>Telegram</h2>
+            <div id="tg-box"></div>
+          </div>
+        </div>
       </section>
 
-      <section data-tab="files" hidden>
-        <h2>Загрузка файла</h2>
-        <form id="upload-form">
-          <input type="file" id="file" required>
-          <button type="submit">Загрузить</button>
-        </form>
-        <div class="toolbar">
-          <button type="button" id="merge-all" class="link">Объединить все в одну</button>
-          <button type="button" id="reclaim" class="link">Освободить место</button>
+      <section data-tab="files" class="page" hidden>
+        <div class="panel">
+          <h2 data-i18n="upload_title"></h2>
+          <form id="upload-form" class="inline">
+            <input type="file" id="file" required>
+            <button type="submit" data-i18n="upload"></button>
+          </form>
+          <p class="muted" data-i18n="inbox_hint"></p>
+        </div>
+        <div class="panel">
+          <div class="toolbar">
+            <button type="button" id="merge-all" class="ghost" data-i18n="merge_all"></button>
+            <button type="button" id="reclaim" class="ghost" data-i18n="reclaim"></button>
+            <button type="button" id="vocab-rebuild" class="ghost" data-i18n="vocab"></button>
+          </div>
+          <form id="autopack-form" class="autopack">
+            <label class="check"><input type="checkbox" id="ap-enabled"> <span data-i18n="autopack"></span></label>
+            <select id="ap-days">
+              <option value="0" data-i18n="ap_now"></option>
+              <option value="1" data-i18n="ap_1"></option>
+              <option value="7" data-i18n="ap_7"></option>
+              <option value="30" data-i18n="ap_30"></option>
+              <option value="90" data-i18n="ap_90"></option>
+            </select>
+            <select id="ap-method">
+              <option value="bz2">bz2</option>
+              <option value="lzma">lzma</option>
+              <option value="zlib">zlib</option>
+            </select>
+            <button type="submit" class="mini" data-i18n="save"></button>
+          </form>
         </div>
         <p id="stats" class="muted"></p>
-        <form id="autopack-form" class="autopack">
-          <label class="check"><input type="checkbox" id="ap-enabled"> Автосжатие</label>
-          <span class="muted-inline">через</span>
-          <select id="ap-days">
-            <option value="0">сразу после загрузки</option>
-            <option value="1">1 день</option>
-            <option value="7">7 дней</option>
-            <option value="30">30 дней</option>
-            <option value="90">90 дней</option>
-          </select>
-          <select id="ap-method">
-            <option value="bz2">bz2</option>
-            <option value="lzma">lzma</option>
-            <option value="zlib">zlib</option>
-          </select>
-          <button type="submit" class="mini">Сохранить</button>
-        </form>
-        <div class="toolbar"><button type="button" id="vocab-rebuild" class="link">Обновить словарь поиска</button></div>
-        <ul id="files"></ul>
+        <ul id="files" class="files"></ul>
       </section>
 
-      <section data-tab="requests" hidden>
-        <h2>Заявки из бота</h2>
-        <div class="toolbar term">
-          <span class="muted-inline">Срок VIP при одобрении</span>
-          <select id="req-days">
-            <option value="">Навсегда</option>
-            <option value="7">7 дней</option>
-            <option value="30">30 дней</option>
-            <option value="90">90 дней</option>
-            <option value="365">365 дней</option>
-          </select>
+      <section data-tab="requests" class="page" hidden>
+        <div class="head">
+          <h2 data-i18n="tab_requests"></h2>
+          <span class="term">
+            <span class="muted-inline" data-i18n="req_term"></span>
+            <select id="req-days">
+              <option value="" data-i18n="forever"></option>
+              <option value="7" data-i18n="d7"></option>
+              <option value="30" data-i18n="d30"></option>
+              <option value="90" data-i18n="d90"></option>
+              <option value="365" data-i18n="d365"></option>
+            </select>
+          </span>
         </div>
         <ul id="requests" class="rows"></ul>
       </section>
 
-      <section data-tab="invites" hidden>
-        <h2>Токены регистрации</h2>
-        <form id="invite-form">
-          <select id="invite-role">
-            <option value="user">Обычный</option>
-            <option value="vip">VIP</option>
-            <option value="admin">Админ</option>
-          </select>
-          <select id="invite-days" title="Срок VIP">
-            <option value="">Навсегда</option>
-            <option value="7">7 дней</option>
-            <option value="30">30 дней</option>
-            <option value="90">90 дней</option>
-            <option value="365">365 дней</option>
-          </select>
-          <input type="text" id="invite-note" placeholder="Заметка, например имя" maxlength="200">
-          <button type="submit">Создать токен</button>
-        </form>
-        <div id="new-token" class="token-box" hidden></div>
+      <section data-tab="invites" class="page" hidden>
+        <div class="panel">
+          <h2 data-i18n="tab_invites"></h2>
+          <form id="invite-form" class="inline">
+            <select id="invite-role">
+              <option value="user" data-i18n="role_user"></option>
+              <option value="vip" data-i18n="role_vip"></option>
+              <option value="admin" data-i18n="role_admin"></option>
+            </select>
+            <select id="invite-days">
+              <option value="" data-i18n="forever"></option>
+              <option value="7" data-i18n="d7"></option>
+              <option value="30" data-i18n="d30"></option>
+              <option value="90" data-i18n="d90"></option>
+              <option value="365" data-i18n="d365"></option>
+            </select>
+            <input type="text" id="invite-note" data-i18n-ph="invite_note" maxlength="200">
+            <button type="submit" data-i18n="invite_create"></button>
+          </form>
+          <div id="new-token" class="token-box" hidden></div>
+        </div>
         <ul id="invites" class="rows"></ul>
       </section>
 
-      <section data-tab="users" hidden>
-        <h2>Пользователи</h2>
+      <section data-tab="users" class="page" hidden>
+        <div class="head"><h2 data-i18n="tab_users"></h2></div>
         <ul id="users" class="rows"></ul>
       </section>
 
-      <section data-tab="stats" hidden>
-        <h2>Статистика</h2>
+      <section data-tab="stats" class="page" hidden>
         <div id="stat-cards" class="cards"></div>
-        <h2 class="gap">Поиски за 30 дней</h2>
-        <div id="stat-chart" class="chart"></div>
-        <h2 class="gap">Частые запросы</h2>
-        <ul id="stat-queries" class="rows"></ul>
-        <h2 class="gap">Активные пользователи</h2>
-        <ul id="stat-users" class="rows"></ul>
+        <div class="panel">
+          <h2 data-i18n="chart_title"></h2>
+          <div id="stat-chart" class="chart"></div>
+        </div>
+        <div class="grid2">
+          <div class="panel"><h2 data-i18n="top_queries"></h2><ul id="stat-queries" class="rows"></ul></div>
+          <div class="panel"><h2 data-i18n="top_users"></h2><ul id="stat-users" class="rows"></ul></div>
+        </div>
       </section>
 
-      <section data-tab="audit" hidden>
-        <h2>Журнал</h2>
-        <form id="audit-form">
-          <select id="audit-action"><option value="">Все действия</option></select>
-          <input type="text" id="audit-actor" placeholder="Кто" maxlength="64">
-          <button type="submit">Показать</button>
-        </form>
+      <section data-tab="missed" class="page" hidden>
+        <div class="head"><h2 data-i18n="tab_missed"></h2><button type="button" id="missed-clear" class="link" data-i18n="clear"></button></div>
+        <p class="muted" data-i18n="missed_hint"></p>
+        <ul id="missed" class="rows"></ul>
+      </section>
+
+      <section data-tab="backups" class="page" hidden>
+        <div class="head"><h2 data-i18n="tab_backups"></h2><button type="button" id="backup-create" data-i18n="backup_create"></button></div>
+        <p id="backup-status" class="status" hidden></p>
+        <p class="muted" data-i18n="backup_hint"></p>
+        <ul id="backups" class="rows"></ul>
+      </section>
+
+      <section data-tab="audit" class="page" hidden>
+        <div class="panel">
+          <form id="audit-form" class="inline">
+            <select id="audit-action"></select>
+            <input type="text" id="audit-actor" data-i18n-ph="audit_actor" maxlength="64">
+            <button type="submit" data-i18n="show"></button>
+          </form>
+        </div>
         <ul id="audit" class="rows"></ul>
-        <div class="toolbar"><button type="button" id="audit-more" class="link" hidden>Еще</button></div>
+        <div class="toolbar center"><button type="button" id="audit-more" class="ghost" data-i18n="more" hidden></button></div>
       </section>
     </div>
   </main>
+
+  <dialog id="edit-dialog" class="dialog">
+    <form id="edit-form" method="dialog">
+      <h3 data-i18n="edit_title"></h3>
+      <div id="edit-fields" class="edit-fields"></div>
+      <button type="button" id="edit-add" class="link" data-i18n="edit_add"></button>
+      <div class="dialog-actions">
+        <button type="button" id="edit-cancel" class="ghost" data-i18n="cancel"></button>
+        <button type="submit" data-i18n="save"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/i18n.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

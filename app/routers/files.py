@@ -33,7 +33,7 @@ async def upload(file: UploadFile = File(...), admin=Depends(admin_user)):
     if duplicate:
         os.remove(path)
         raise HTTPException(
-            409, f"Такой файл уже загружен: {duplicate['name']} (id {duplicate['id']})"
+            409, f"This file is already uploaded: {duplicate['name']} (id {duplicate['id']})"
         )
     try:
         get_parser(path)
@@ -58,9 +58,9 @@ async def retry(file_id: int, admin=Depends(admin_user)):
     if record is None:
         raise HTTPException(404, "File not found")
     if record["status"] != "failed":
-        raise HTTPException(409, "Повторить можно только файл с ошибкой")
+        raise HTTPException(409, "Only a failed file can be retried")
     if not record["path"] or not os.path.exists(record["path"]):
-        raise HTTPException(400, "Исходный файл удален, загрузите его заново")
+        raise HTTPException(400, "The source file is gone, upload it again")
     await database.set_file_status(file_id, "pending")
     redis = await get_redis()
     await redis.enqueue_job("process_file", file_id)
@@ -74,7 +74,7 @@ async def delete(file_id: int, admin=Depends(admin_user)):
     if record is None:
         raise HTTPException(404, "File not found")
     if record["status"] not in ("done", "failed"):
-        raise HTTPException(409, "Файл сейчас обрабатывается")
+        raise HTTPException(409, "The file is being processed now")
     await database.set_file_status(file_id, "deleting")
     redis = await get_redis()
     await redis.enqueue_job("delete_file", file_id)

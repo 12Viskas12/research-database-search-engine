@@ -154,7 +154,25 @@ CREATE TABLE IF NOT EXISTS stats_daily (
 );
 """
 
+MORE = """
+ALTER TABLE records ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS missed_queries (
+    id BIGSERIAL PRIMARY KEY,
+    query TEXT NOT NULL,
+    files TEXT NOT NULL DEFAULT '',
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    source TEXT NOT NULL DEFAULT 'web',
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS missed_query_idx ON missed_queries (lower(query));
+
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'uk';
+"""
+
 MIGRATIONS = [
     (1, "baseline", SCHEMA),
     (2, "hash, blocking, stats", FEATURES),
+    (3, "hidden records, missed queries, request language", MORE),
 ]

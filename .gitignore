@@ -1,4 +1,6 @@
-
-.env
 __pycache__/
-.idea/
+*.pyc
+.env
+inbox/*
+!inbox/.gitkeep
+.ruff_cache/

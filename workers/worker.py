@@ -12,6 +12,7 @@ from workers.tasks import (
     rebuild_vocab,
     reclaim_space,
     recover,
+    scan_inbox,
     unpack_file,
 )
 
@@ -36,7 +37,10 @@ class WorkerSettings:
         rebuild_vocab,
         delete_file,
     ]
-    cron_jobs = [cron(autopack_files, minute={0, 10, 20, 30, 40, 50}, timeout=7200)]
+    cron_jobs = [
+        cron(autopack_files, minute={0, 10, 20, 30, 40, 50}, timeout=7200),
+        cron(scan_inbox, timeout=600),
+    ]
     redis_settings = redis_settings()
     on_startup = startup
     on_shutdown = shutdown
