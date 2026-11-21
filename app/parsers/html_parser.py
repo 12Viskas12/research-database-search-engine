@@ -1,7 +1,5 @@
 from lxml import etree, html
-
 from app.parsers.base import BaseParser
-
 
 BLOCKS = (
     "p", "div", "li", "br", "tr", "pre", "blockquote", "section", "article",
@@ -9,7 +7,7 @@ BLOCKS = (
 )
 
 
-def cell_text(cell):
+def cell_text(cell) -> str:
     return " ".join(cell.text_content().split())
 
 

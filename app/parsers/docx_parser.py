@@ -1,6 +1,5 @@
 import zipfile
 import xml.etree.ElementTree as ET
-
 from app.parsers.base import BaseParser
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
@@ -13,17 +12,21 @@ def text_of(element):
 class DocxParser(BaseParser):
     def parse(self):
         with zipfile.ZipFile(self.path) as z:
-            root = ET.fromstring(z.read("word/document.xml"))
-        body = root.find(f"{W}body")
-        if body is None:
-            return
-        for node in body:
-            if node.tag == f"{W}p":
-                text = text_of(node)
-                if text:
-                    yield {"text": text}
-            elif node.tag == f"{W}tbl":
-                yield from self._table(node)
+            with z.open("word/document.xml") as f:
+                in_table = False
+                for event, elem in ET.iterparse(f, events=("start", "end")):
+                    if event == "start" and elem.tag == f"{W}tbl":
+                        in_table = True
+                    elif event == "end":
+                        if elem.tag == f"{W}p" and not in_table:
+                            text = text_of(elem)
+                            if text:
+                                yield {"text": text}
+                            elem.clear()
+                        elif elem.tag == f"{W}tbl":
+                            in_table = False
+                            yield from self._table(elem)
+                            elem.clear()
 
     def _table(self, table):
         rows = [

@@ -1,6 +1,5 @@
 import zipfile
 import xml.etree.ElementTree as ET
-
 from app.parsers.base import BaseParser
 
 NS = {
@@ -14,8 +13,7 @@ MAX_REPEAT = 256
 
 def cell_value(cell):
     parts = ["".join(p.itertext()) for p in cell.findall(f"{X}p")]
-    text = "\n".join(parts).strip()
-    return text
+    return "\n".join(parts).strip()
 
 
 def row_values(row):
@@ -34,20 +32,23 @@ def row_values(row):
 class OdsParser(BaseParser):
     def parse(self):
         with zipfile.ZipFile(self.path) as z:
-            root = ET.fromstring(z.read("content.xml"))
-        for sheet in root.iter(f"{T}table"):
-            header = None
-            for row in sheet.iter(f"{T}table-row"):
-                values = row_values(row)
-                if not any(values):
-                    continue
-                if header is None:
-                    header = [h or f"col{i + 1}" for i, h in enumerate(values)]
-                    continue
-                repeat = min(int(row.get(f"{T}number-rows-repeated", "1")), MAX_REPEAT)
-                record = {
-                    (header[i] if i < len(header) else f"col{i + 1}"): v
-                    for i, v in enumerate(values)
-                }
-                for _ in range(repeat):
-                    yield dict(record)
+            with z.open("content.xml") as f:
+                header = None
+                for event, elem in ET.iterparse(f, events=("end",)):
+                    if elem.tag == f"{T}table":
+                        header = None
+                        elem.clear()
+                    elif elem.tag == f"{T}table-row":
+                        values = row_values(elem)
+                        if any(values):
+                            if header is None:
+                                header = [h or f"col{i + 1}" for i, h in enumerate(values)]
+                            else:
+                                repeat = min(int(elem.get(f"{T}number-rows-repeated", "1")), MAX_REPEAT)
+                                record = {
+                                    (header[i] if i < len(header) else f"col{i + 1}"): v
+                                    for i, v in enumerate(values)
+                                }
+                                for _ in range(repeat):
+                                    yield dict(record)
+                        elem.clear()

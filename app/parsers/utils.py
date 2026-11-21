@@ -1,50 +1,27 @@
-import codecs
-import csv
-import io
-import re
-
-DELIMITERS = ",;\t|"
-KEY_VALUE = re.compile(r"^\s*([^:=\n]{1,40}?)\s*[:=]\s*(.+?)\s*$")
+import duckdb
+from app.parsers.base import BaseParser
 
 
-def detect_encoding(path):
-    with open(path, "rb") as f:
-        head = f.read(4)
-    if head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
-        return "utf-16"
-    for enc in ("utf-8-sig", "cp1251"):
+class JsonParser(BaseParser):
+    def _query(self) -> str:
+        safe_path = self.path.replace("'", "''")
+        # format='auto' сам различает JSON-массив и построчный NDJSON/JSONL
+        # maximum_object_size=104857600 (100 MB) защищает от падения на крупных вложенных объектах
+        return (
+            f"SELECT * FROM read_json_auto('{safe_path}', "
+            f"format='auto', maximum_object_size=104857600, ignore_errors=true)"
+        )
+
+    def to_postgres(self, ingestor, table_name: str, schema: str = "public"):
+        ingestor.ingest_sql_query(self._query(), table_name, schema)
+
+    def parse(self):
+        con = duckdb.connect()
         try:
-            with open(path, encoding=enc, newline="") as f:
-                while f.read(1 << 20):
-                    pass
-            return enc
-        except UnicodeDecodeError:
-            continue
-    return "latin-1"
-
-
-def read_text(path):
-    with open(path, encoding=detect_encoding(path), newline="") as f:
-        return f.read()
-
-
-def detect_delimiter(lines):
-    lines = [x for x in lines if x.strip()][:50]
-    if len(lines) < 2:
-        return None
-    for delimiter in DELIMITERS:
-        try:
-            counts = {len(r) for r in csv.reader(io.StringIO("\n".join(lines)), delimiter=delimiter)}
-        except csv.Error:
-            continue
-        if len(counts) == 1 and counts.pop() >= 2:
-            return delimiter
-    return None
-
-
-def scalar(value):
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return value
+            cursor = con.execute(self._query())
+            cols = [d[0] for d in cursor.description]
+            while rows := cursor.fetchmany(10_000):
+                for r in rows:
+                    yield dict(zip(cols, r))
+        finally:
+            con.close()

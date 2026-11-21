@@ -1,52 +1,27 @@
-import json
-
+import duckdb
 from app.parsers.base import BaseParser
-from app.parsers.utils import detect_encoding, read_text, scalar
-
-
-def flatten(value, prefix=""):
-    if isinstance(value, dict):
-        out = {}
-        for key, item in value.items():
-            name = f"{prefix}.{key}" if prefix else str(key)
-            out.update(flatten(item, name))
-        return out
-    if isinstance(value, list):
-        if all(not isinstance(x, (dict, list)) for x in value):
-            joined = ", ".join(str(scalar(x)) for x in value if x is not None)
-            return {prefix or "value": joined}
-        return {prefix or "value": json.dumps(value, ensure_ascii=False)}
-    return {prefix or "value": scalar(value)}
-
-
-def records(data):
-    if isinstance(data, list):
-        return data
-    if isinstance(data, dict):
-        for item in data.values():
-            if isinstance(item, list) and item:
-                return item
-        return [data]
-    return [data]
 
 
 class JsonParser(BaseParser):
-    def parse(self):
-        try:
-            data = json.loads(read_text(self.path))
-        except json.JSONDecodeError:
-            yield from self._lines()
-            return
-        for item in records(data):
-            yield flatten(item)
+    def _query(self) -> str:
+        safe_path = self.path.replace("'", "''")
+        # format='auto' сам различает JSON-массив и построчный NDJSON/JSONL
+        # maximum_object_size=104857600 (100 MB) защищает от падения на крупных вложенных объектах
+        return (
+            f"SELECT * FROM read_json_auto('{safe_path}', "
+            f"format='auto', maximum_object_size=104857600, ignore_errors=true)"
+        )
 
-    def _lines(self):
-        with open(self.path, encoding=detect_encoding(self.path)) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield flatten(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+    def to_postgres(self, ingestor, table_name: str, schema: str = "public"):
+        ingestor.ingest_sql_query(self._query(), table_name, schema)
+
+    def parse(self):
+        con = duckdb.connect()
+        try:
+            cursor = con.execute(self._query())
+            cols = [d[0] for d in cursor.description]
+            while rows := cursor.fetchmany(10_000):
+                for r in rows:
+                    yield dict(zip(cols, r))
+        finally:
+            con.close()

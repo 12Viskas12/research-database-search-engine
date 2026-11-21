@@ -1,17 +1,21 @@
-import csv
-
+import duckdb
 from app.parsers.base import BaseParser
-from app.parsers.utils import detect_encoding
 
 
-class CsvParser(BaseParser):
+class JsonParser(BaseParser):
+    def _query(self) -> str:
+        safe_path = self.path.replace("'", "''")
+        # format='auto' сам понимает как обычный JSON-массив, так и NDJSON/JSONL
+        return f"SELECT * FROM read_json_auto('{safe_path}', maximum_object_size=104857600, ignore_errors=true)"
+
+    def to_postgres(self, ingestor, table_name: str, schema: str = "public"):
+        ingestor.ingest_sql_query(self._query(), table_name, schema)
+
     def parse(self):
-        with open(self.path, encoding=detect_encoding(self.path), newline="") as f:
-            sample = f.read(65536)
-            f.seek(0)
-            try:
-                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-            except csv.Error:
-                dialect = csv.excel
-            for row in csv.DictReader(f, dialect=dialect):
-                yield row
+        con = duckdb.connect()
+        cursor = con.execute(self._query())
+        cols = [d[0] for d in cursor.description]
+        while rows := cursor.fetchmany(10_000):
+            for r in rows:
+                yield dict(zip(cols, r))
+        con.close()
