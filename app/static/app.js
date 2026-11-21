@@ -1,18 +1,26 @@
 const $ = (id) => document.getElementById(id);
 
+const ROLE = { user: "Обычный", vip: "VIP", admin: "Админ" };
+const STATUS = {
+  pending: "в очереди",
+  processing: "загрузка",
+  packing: "сжатие",
+  unpacking: "распаковка",
+  done: "готово",
+  failed: "ошибка",
+  deleting: "удаление",
+};
 const BUSY = ["processing", "packing", "unpacking", "deleting"];
 const TABS = [
-  { id: "search" },
-  { id: "history" },
-  { id: "profile" },
-  { id: "files", admin: true },
-  { id: "requests", admin: true },
-  { id: "invites", admin: true },
-  { id: "users", admin: true },
-  { id: "stats", admin: true },
-  { id: "missed", admin: true },
-  { id: "backups", admin: true },
-  { id: "audit", admin: true },
+  { id: "search", label: "Поиск" },
+  { id: "history", label: "История" },
+  { id: "profile", label: "Профиль" },
+  { id: "files", label: "Файлы", admin: true },
+  { id: "requests", label: "Заявки", admin: true },
+  { id: "invites", label: "Токены", admin: true },
+  { id: "users", label: "Пользователи", admin: true },
+  { id: "stats", label: "Статистика", admin: true },
+  { id: "audit", label: "Журнал", admin: true },
 ];
 
 let me = null;
@@ -21,7 +29,6 @@ let timer = null;
 let toastTimer = null;
 let current = null;
 let auditBefore = null;
-let editing = null;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -37,16 +44,14 @@ function button(label, className, handler) {
   return node;
 }
 
-function locale() {
-  return LANG === "uk" ? "uk-UA" : "en-GB";
-}
-
 function date(value) {
-  return value ? new Date(value).toLocaleString(locale(), { dateStyle: "short", timeStyle: "short" }) : "";
+  return value
+    ? new Date(value).toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" })
+    : "";
 }
 
 function size(bytes) {
-  const units = LANG === "uk" ? ["Б", "КБ", "МБ", "ГБ", "ТБ"] : ["B", "KB", "MB", "GB", "TB"];
+  const units = ["Б", "КБ", "МБ", "ГБ", "ТБ"];
   let i = 0;
   let value = Number(bytes) || 0;
   while (value >= 1024 && i < units.length - 1) {
@@ -90,10 +95,10 @@ async function api(url, options = {}) {
   return { ok: res.ok, status: res.status, data };
 }
 
-function detail(res) {
+function detail(res, fallback = "Ошибка") {
   const d = res.data && res.data.detail;
-  if (typeof d === "string") return errorText(d);
-  return d ? t("err_check") : t("err_generic");
+  if (typeof d === "string") return d;
+  return d ? "Проверьте введенные данные" : fallback;
 }
 
 async function act(url, options, done) {
@@ -113,55 +118,35 @@ function showAuth() {
   $("auth").hidden = false;
 }
 
-function renderNav() {
-  const nav = $("nav");
-  const tabs = TABS.filter((x) => !x.admin || me.role === "admin");
-  const nodes = [];
-  let divider = false;
-  for (const item of tabs) {
-    if (item.admin && !divider) {
-      nodes.push(el("span", "nav-gap"));
-      divider = true;
-    }
-    const b = button(t(`tab_${item.id}`), `tab${item.id === tab ? " active" : ""}`, () => switchTab(item.id));
-    b.dataset.tab = item.id;
-    nodes.push(b);
-  }
-  nav.replaceChildren(...nodes);
-  nav.hidden = tabs.length < 2;
-}
-
 function showApp() {
   $("auth").hidden = true;
   $("app").hidden = false;
   $("me").hidden = false;
-  $("hidden-box").hidden = me.role !== "admin";
-  tab = "search";
   renderMe();
-  renderNav();
+  const nav = $("nav");
+  const tabs = TABS.filter((t) => !t.admin || me.role === "admin");
+  nav.replaceChildren(
+    ...tabs.map((t) => {
+      const b = button(t.label, "tab", () => switchTab(t.id));
+      b.dataset.tab = t.id;
+      return b;
+    })
+  );
+  nav.hidden = tabs.length < 2;
   switchTab("search");
-}
-
-function roleName(role) {
-  return t(`role_${role}`);
 }
 
 function renderMe() {
   $("me-name").textContent = me.username;
   const badge = $("me-role");
-  badge.textContent = roleName(me.role);
+  badge.textContent = ROLE[me.role];
   badge.className = `badge ${me.role}`;
-  badge.title = me.role_until ? t("until", { date: date(me.role_until) }) : "";
-  $("me-rank").textContent = rankLine(me.rank);
+  badge.title = me.role_until ? `до ${date(me.role_until)}` : "";
+  const rank = me.rank;
+  let text = `${rank.title} · поисков: ${rank.total}`;
+  if (rank.next_at) text += ` · до «${rank.next_title}» ещё ${rank.next_at - rank.total}`;
+  $("me-rank").textContent = text;
   renderQuota(me.quota);
-}
-
-function rankLine(rank) {
-  let text = t("rank_line", { title: t(`rank_${rank.title}`), total: rank.total });
-  if (rank.next_at) {
-    text += t("rank_next", { next: t(`rank_${rank.next_title}`), left: rank.next_at - rank.total });
-  }
-  return text;
 }
 
 function renderQuota(quota) {
@@ -169,11 +154,11 @@ function renderQuota(quota) {
   const fill = $("quota-fill");
   fill.className = "bar-fill";
   if (quota.limit === null) {
-    text.textContent = t("quota_unlimited");
+    text.textContent = "Запросов без ограничений";
     fill.style.width = "100%";
     return;
   }
-  text.textContent = t("quota_used", { used: quota.used, limit: quota.limit });
+  text.textContent = `Запросов в этом месяце: ${quota.used} из ${quota.limit}`;
   const ratio = quota.limit ? quota.used / quota.limit : 1;
   fill.style.width = `${Math.min(100, Math.round(ratio * 100))}%`;
   if (quota.remaining === 0) fill.classList.add("full");
@@ -186,17 +171,15 @@ async function refreshMe() {
   const before = me && me.rank.title;
   me = res.data;
   renderMe();
-  if (before && before !== me.rank.title) toast(t("rank_new", { title: t(`rank_${me.rank.title}`) }));
+  if (before && before !== me.rank.title) toast(`Новое звание: ${me.rank.title}!`);
 }
 
 function switchTab(id) {
   tab = id;
   clearInterval(timer);
-  document.querySelectorAll("section[data-tab]").forEach((node) => {
-    node.hidden = node.dataset.tab !== id;
-  });
-  document.querySelectorAll("#nav .tab").forEach((node) => {
-    node.classList.toggle("active", node.dataset.tab === id);
+  document.querySelectorAll("[data-tab]").forEach((node) => {
+    if (node.tagName === "SECTION") node.hidden = node.dataset.tab !== id;
+    else node.classList.toggle("active", node.dataset.tab === id);
   });
   const loaders = {
     files: [loadFiles, 1500],
@@ -205,8 +188,6 @@ function switchTab(id) {
     users: [loadUsers, 0],
     audit: [() => loadAudit(true), 0],
     stats: [loadStats, 0],
-    missed: [loadMissed, 0],
-    backups: [loadBackups, 3000],
     history: [loadHistory, 0],
     profile: [renderProfile, 0],
     search: [loadSources, 0],
@@ -224,7 +205,7 @@ function escapeRe(value) {
 
 function highlight(text, list) {
   const frag = document.createDocumentFragment();
-  const marks = [...new Set((list || []).filter(Boolean))].sort((a, b) => b.length - a.length);
+  const marks = [...new Set(list.filter(Boolean))].sort((a, b) => b.length - a.length);
   if (!marks.length) {
     frag.append(text);
     return frag;
@@ -235,6 +216,19 @@ function highlight(text, list) {
     else if (part) frag.append(part);
   });
   return frag;
+}
+
+function renderItem(item, list, title, hidden) {
+  const data = item.data || item;
+  const card = el("div", "card");
+  if (title) card.append(el("div", "card-title", title));
+  for (const [k, v] of Object.entries(data)) {
+    if (v === null || v === "" || (hidden && hidden.has(k))) continue;
+    const row = el("div", "row");
+    row.append(el("b", "", `${k}: `), highlight(String(v), list));
+    card.append(row);
+  }
+  return card;
 }
 
 function hiddenCols() {
@@ -253,166 +247,12 @@ function saveHiddenCols(set) {
   }
 }
 
-function groupKeys(groups) {
+function columnsOf(items) {
   const keys = [];
-  for (const g of groups) {
-    for (const r of g.records) {
-      for (const key of Object.keys(r.data)) if (!keys.includes(key)) keys.push(key);
-    }
+  for (const item of items) {
+    for (const key of Object.keys(item.data || item)) if (!keys.includes(key)) keys.push(key);
   }
   return keys;
-}
-
-function mergeFields(records) {
-  const map = new Map();
-  records.forEach((rec, i) => {
-    for (const [k, v] of Object.entries(rec.data)) {
-      if (v === null || v === "") continue;
-      const text = String(v);
-      if (!map.has(k)) map.set(k, new Map());
-      const values = map.get(k);
-      const norm = text.trim().toLowerCase();
-      if (!values.has(norm)) values.set(norm, { text, srcs: [] });
-      values.get(norm).srcs.push(i);
-    }
-  });
-  return map;
-}
-
-function sourceTags(srcs) {
-  const wrap = el("span", "srcs");
-  srcs.forEach((i) => wrap.append(el("sup", "src", String(i + 1))));
-  return wrap;
-}
-
-function fieldRows(records, marks, hide, tagged) {
-  const rows = [];
-  for (const [key, values] of mergeFields(records)) {
-    if (hide && hide.has(key)) continue;
-    const row = el("div", "row");
-    row.append(el("b", "", `${key}: `));
-    [...values.values()].forEach((v, i) => {
-      if (i) row.append(" · ");
-      row.append(highlight(v.text, marks));
-      if (tagged) row.append(sourceTags(v.srcs));
-    });
-    rows.push(row);
-  }
-  return rows;
-}
-
-function cardTitle(record) {
-  for (const v of Object.values(record.data)) {
-    const text = v === null ? "" : String(v).trim();
-    if (text && text.length <= 80) return text;
-  }
-  return "";
-}
-
-function findGroupOf(rec) {
-  return current && current.items.find((g) => g.records.includes(rec));
-}
-
-function afterRecordChange(group, rec, removed) {
-  if (removed) {
-    group.records = group.records.filter((r) => r !== rec);
-    group.own_ids = group.own_ids.filter((id) => id !== rec.id);
-    if (!group.records.length) {
-      current.items = current.items.filter((g) => g !== group);
-    } else if (group.id === rec.id) {
-      group.id = group.records[0].id;
-      group.file_id = group.records[0].file_id;
-      group.data = group.records[0].data;
-    }
-  } else if (group.id === rec.id) {
-    group.data = rec.data;
-  }
-  refreshTools();
-  drawResults();
-}
-
-function recordActions(rec) {
-  const bar = el("div", "rec-actions");
-  if (!me || me.role !== "admin") return bar;
-  if (typeof rec.id !== "number") {
-    bar.append(el("span", "muted-inline", t("packed_note")));
-    return bar;
-  }
-  const group = () => findGroupOf(rec);
-  const hiddenMode = current && current.hidden;
-  bar.append(
-    button(t("edit"), "mini", () => openEdit(rec, group)),
-    button(hiddenMode ? t("unhide") : t("hide"), "mini", () =>
-      act(`/api/admin/records/${rec.id}/hide`, { method: "POST", json: { hidden: !hiddenMode } }, () => {
-        toast(t(hiddenMode ? "record_unhidden" : "record_hidden"));
-        const g = group();
-        if (g) afterRecordChange(g, rec, true);
-      })
-    ),
-    button(t("delete"), "mini danger", () => {
-      if (!confirm(t("delete_record_q"))) return;
-      act(`/api/admin/records/${rec.id}`, { method: "DELETE" }, () => {
-        toast(t("record_deleted"));
-        const g = group();
-        if (g) afterRecordChange(g, rec, true);
-      });
-    })
-  );
-  return bar;
-}
-
-function recordPanel(rec, index, marks, hide) {
-  const box = el("div", "rec");
-  const head = el("div", "rec-head");
-  head.append(el("span", "src-num", String(index + 1)), el("span", "rec-file", rec.file || t("from_file")));
-  box.append(head);
-  for (const [k, v] of Object.entries(rec.data)) {
-    if (v === null || v === "" || (hide && hide.has(k))) continue;
-    const row = el("div", "row");
-    row.append(el("b", "", `${k}: `), highlight(String(v), marks));
-    box.append(row);
-  }
-  box.append(recordActions(rec));
-  return box;
-}
-
-function renderGroup(group, marks, hide, label) {
-  const card = el("article", "card");
-  const records = group.records;
-  const head = el("div", "card-head");
-  const title = label || cardTitle(records[0]);
-  head.append(el("div", "card-title", title));
-  const badges = el("div", "card-badges");
-  if (current && current.hidden) badges.append(el("span", "badge muted", t("hidden_mark")));
-  if (records.length > 1) badges.append(el("span", "badge vip", t("sources_n", { n: records.length })));
-  head.append(badges);
-  card.append(head);
-  const body = el("div", "card-body");
-  body.append(...fieldRows(records, marks, hide, records.length > 1));
-  card.append(body);
-  if (records.length === 1) {
-    const foot = el("div", "card-foot");
-    if (records[0].file) foot.append(el("span", "chip", records[0].file));
-    foot.append(recordActions(records[0]));
-    card.append(foot);
-    return card;
-  }
-  const chips = el("div", "card-foot");
-  records.forEach((rec, i) => {
-    const chip = el("span", "chip");
-    chip.append(el("span", "src-num", String(i + 1)), rec.file || "");
-    chips.append(chip);
-  });
-  card.append(chips);
-  const details = el("div", "details");
-  details.hidden = true;
-  records.forEach((rec, i) => details.append(recordPanel(rec, i, marks, hide)));
-  const toggle = button(t("details"), "link toggle", () => {
-    details.hidden = !details.hidden;
-    toggle.textContent = t(details.hidden ? "details" : "hide_details");
-  });
-  card.append(toggle, details);
-  return card;
 }
 
 function sortedItems() {
@@ -420,20 +260,19 @@ function sortedItems() {
   const [field, dir] = $("sort").value.split(":");
   if (!field) return items;
   const sign = dir === "desc" ? -1 : 1;
-  const value = (g) => String(g.data[field] ?? "");
-  return items.sort((x, y) => sign * value(x).localeCompare(value(y), locale(), { numeric: true }));
+  const value = (item) => String((item.data || item)[field] ?? "");
+  return items.sort(
+    (x, y) => sign * value(x).localeCompare(value(y), "ru", { numeric: true })
+  );
 }
 
 function refreshTools() {
-  const keys = groupKeys(current.items);
+  const keys = columnsOf(current.items);
   const sort = $("sort");
   const chosen = sort.value;
-  sort.replaceChildren(new Option(t("as_found"), ""));
+  sort.replaceChildren(new Option("Как найдено", ""));
   for (const key of keys) {
-    sort.append(
-      new Option(t("sort_asc", { k: key }), `${key}:asc`),
-      new Option(t("sort_desc", { k: key }), `${key}:desc`)
-    );
+    sort.append(new Option(`${key} А-Я`, `${key}:asc`), new Option(`${key} Я-А`, `${key}:desc`));
   }
   sort.value = [...sort.options].some((o) => o.value === chosen) ? chosen : "";
   const hidden = hiddenCols();
@@ -458,14 +297,14 @@ function refreshTools() {
 
 function drawResults() {
   const items = sortedItems();
-  const hide = hiddenCols();
+  const hidden = hiddenCols();
   $("results").replaceChildren(
-    ...(items.length ? items.map((g) => renderGroup(g, current.marks, hide)) : [el("p", "empty", t("empty"))])
+    ...(items.length
+      ? items.map((item) => renderItem(item, current.marks, "", hidden))
+      : [el("p", "empty", "Ничего не найдено")])
   );
   $("more").hidden = !current.more;
   $("result-tools").hidden = !items.length;
-  $("result-count").textContent = t("found_count", { n: items.length });
-  $("export").hidden = current.hidden;
 }
 
 function showMessage(node) {
@@ -480,7 +319,7 @@ async function loadSources() {
   if (!res.ok) return;
   const select = $("scope");
   const value = select.value;
-  select.replaceChildren(new Option(t("all_files"), ""));
+  select.replaceChildren(new Option("Все файлы", ""));
   res.data.forEach((f) => select.append(new Option(f.name, String(f.id))));
   select.value = [...select.options].some((o) => o.value === value) ? value : "";
 }
@@ -501,29 +340,17 @@ async function runSearch(url, render) {
 function searchUrl(state) {
   const params = new URLSearchParams({ q: state.q, offset: String(state.offset) });
   if (state.files) params.set("files", state.files);
-  if (state.hidden) params.set("hidden", "true");
   if (state.searchId && state.offset) params.set("search_id", String(state.searchId));
   return `/api/search?${params}`;
 }
 
-function takeFresh(data) {
-  const fresh = data.items.filter((g) => !g.own_ids.every((id) => current.seen.has(id)));
-  for (const g of data.items) {
-    for (const id of g.own_ids) current.seen.add(id);
-    for (const r of g.records) current.seen.add(r.id);
-  }
-  return fresh;
-}
-
 async function startSearch(q, files) {
-  const hidden = me.role === "admin" && $("show-hidden").checked;
-  const next = { q, files, hidden, offset: 0, searchId: null, marks: [], items: [], more: false, seen: new Set() };
+  const next = { q, files, offset: 0, searchId: null, marks: [], items: [], more: false };
   await runSearch(searchUrl(next), (data) => {
     current = next;
     current.searchId = data.search_id;
     current.marks = data.marks || [];
-    current.offset = data.raw;
-    current.items = takeFresh(data);
+    current.items = data.items;
     current.more = data.more;
     refreshTools();
     drawResults();
@@ -532,9 +359,9 @@ async function startSearch(q, files) {
 
 $("more").addEventListener("click", async () => {
   if (!current) return;
-  await runSearch(searchUrl(current), (data) => {
-    current.items = current.items.concat(takeFresh(data));
-    current.offset += data.raw;
+  const next = { ...current, offset: current.items.length };
+  await runSearch(searchUrl(next), (data) => {
+    current.items = current.items.concat(data.items);
     current.marks = data.marks || current.marks;
     current.more = data.more;
     refreshTools();
@@ -553,18 +380,7 @@ $("search-form").addEventListener("submit", (e) => {
 
 $("lucky").addEventListener("click", () => {
   runSearch("/api/lucky", ({ item }) => {
-    current = { q: "", files: "", hidden: false, items: [], marks: [], more: false, offset: 0, seen: new Set() };
-    const group = {
-      id: item.id,
-      file_id: item.file_id,
-      data: item.data,
-      own_ids: [item.id],
-      records: [{ id: item.id, file_id: item.file_id, file: "", data: item.data, own: true }],
-    };
-    current.items = [group];
-    $("results").replaceChildren(renderGroup(group, [], hiddenCols(), t("random_record")));
-    $("more").hidden = true;
-    $("result-tools").hidden = true;
+    showMessage(renderItem(item, [], "Случайная запись", hiddenCols()));
   });
 });
 
@@ -577,7 +393,7 @@ async function download(url, name) {
     } catch {
       data = null;
     }
-    toast(data && typeof data.detail === "string" ? errorText(data.detail) : t("err_generic"));
+    toast((data && data.detail) || "Ошибка");
     return;
   }
   saveBlob(await res.blob(), name);
@@ -593,7 +409,7 @@ function saveBlob(blob, name) {
 }
 
 $("export").addEventListener("click", () => {
-  if (!current || !current.q) return;
+  if (!current) return;
   const params = new URLSearchParams({ q: current.q });
   if (current.files) params.set("files", current.files);
   if (current.searchId) params.set("search_id", String(current.searchId));
@@ -611,10 +427,6 @@ $("bulk-toggle").addEventListener("click", () => {
   $("bulk").hidden = !$("bulk").hidden;
 });
 
-function bulkData(r) {
-  return r.item ? r.item.data || r.item : {};
-}
-
 $("bulk-run").addEventListener("click", async () => {
   const values = $("bulk-text").value.split("\n").map((v) => v.trim()).filter(Boolean);
   if (!values.length) return;
@@ -630,7 +442,7 @@ $("bulk-run").addEventListener("click", async () => {
   bulkRows = res.data.results;
   renderQuota(res.data.quota);
   refreshMe();
-  $("bulk-summary").textContent = t("bulk_summary", { found: res.data.found, total: bulkRows.length });
+  $("bulk-summary").textContent = `Найдено ${res.data.found} из ${bulkRows.length}`;
   $("bulk-csv").hidden = false;
   $("bulk-result").replaceChildren(
     ...bulkRows.map((r) => {
@@ -638,11 +450,12 @@ $("bulk-run").addEventListener("click", async () => {
       const info = el("div", "item-info");
       info.append(el("div", "item-title", r.value));
       if (r.item) {
-        const line = Object.values(bulkData(r)).filter((v) => v).join(" · ");
+        const data = r.item.data || r.item;
+        const line = Object.values(data).filter((v) => v).join(" · ");
         info.append(el("div", "item-sub detail", line));
       }
       const side = el("div", "item-side");
-      side.append(el("span", `badge ${r.found ? "vip" : "muted"}`, t(r.found ? "found" : "not_found")));
+      side.append(el("span", `badge ${r.found ? "vip" : ""}`, r.found ? "найдено" : "нет"));
       li.append(info, side);
       return li;
     })
@@ -650,78 +463,33 @@ $("bulk-run").addEventListener("click", async () => {
 });
 
 $("bulk-csv").addEventListener("click", () => {
-  const keys = [];
-  for (const r of bulkRows) for (const k of Object.keys(bulkData(r))) if (!keys.includes(k)) keys.push(k);
+  const keys = columnsOf(bulkRows.filter((r) => r.item).map((r) => r.item));
   const lines = [["value", "found", ...keys].map(csvCell).join(",")];
   for (const r of bulkRows) {
-    const data = bulkData(r);
+    const data = r.item ? r.item.data || r.item : {};
     lines.push([r.value, r.found ? "yes" : "no", ...keys.map((k) => data[k] ?? "")].map(csvCell).join(","));
   }
-  saveBlob(new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" }), "bulk.csv");
-});
-
-function fillEditRow(key, value) {
-  const row = el("div", "edit-row");
-  const k = el("input");
-  k.value = key;
-  k.placeholder = t("edit_key");
-  k.maxLength = 100;
-  const v = el("input");
-  v.value = value;
-  v.placeholder = t("edit_value");
-  row.append(k, v);
-  $("edit-fields").append(row);
-  return row;
-}
-
-function openEdit(rec, group) {
-  editing = { rec, group };
-  $("edit-fields").replaceChildren();
-  for (const [key, value] of Object.entries(rec.data)) fillEditRow(key, value === null ? "" : String(value));
-  $("edit-dialog").showModal();
-}
-
-$("edit-add").addEventListener("click", () => fillEditRow("", "").firstChild.focus());
-
-$("edit-cancel").addEventListener("click", () => $("edit-dialog").close());
-
-$("edit-form").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  if (!editing) return;
-  const data = {};
-  $("edit-fields").querySelectorAll(".edit-row").forEach((row) => {
-    const [k, v] = row.querySelectorAll("input");
-    const key = k.value.trim();
-    if (key) data[key] = v.value;
-  });
-  const { rec, group } = editing;
-  const ok = await act(`/api/admin/records/${rec.id}`, { method: "PATCH", json: { data } });
-  if (!ok) return;
-  rec.data = data;
-  $("edit-dialog").close();
-  toast(t("record_saved"));
-  const g = group();
-  if (g) afterRecordChange(g, rec, false);
+  saveBlob(new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" }), "bulk.csv");
 });
 
 async function loadHistory() {
   const res = await api("/api/history");
   if (!res.ok) return;
   if (!res.data.length) {
-    $("history").replaceChildren(el("li", "empty", t("history_empty")));
+    $("history").replaceChildren(el("li", "empty", "История пуста"));
     return;
   }
   $("history").replaceChildren(
     ...res.data.map((h) => {
       const li = el("li", "item");
       const info = el("div", "item-info");
-      const sub = [date(h.at), t("history_found", { n: h.results })];
-      if (h.source === "bot") sub.push(t("history_bot"));
-      if (h.files) sub.push(t("history_filter"));
+      const sub = [date(h.at), `найдено на первой странице: ${h.results}`];
+      if (h.source === "bot") sub.push("бот");
+      if (h.files) sub.push("с фильтром по файлу");
       info.append(el("div", "item-title", h.query), el("div", "item-sub", sub.join(" · ")));
       const side = el("div", "item-side");
       side.append(
-        button(t("repeat"), "mini", () => {
+        button("Повторить", "mini", () => {
           $("query").value = h.query;
           $("scope").value = h.files.includes(",") ? "" : h.files;
           switchTab("search");
@@ -735,25 +503,16 @@ async function loadHistory() {
 }
 
 $("history-clear").addEventListener("click", () => {
-  if (confirm(t("history_clear_q"))) act("/api/history", { method: "DELETE" }, loadHistory);
+  if (confirm("Очистить историю поиска?")) act("/api/history", { method: "DELETE" }, loadHistory);
 });
-
-async function copy(text) {
-  try {
-    await navigator.clipboard.writeText(text);
-    toast(t("copied"));
-  } catch {
-    toast(text);
-  }
-}
 
 function renderProfile() {
   const box = $("tg-box");
   box.replaceChildren();
   if (me.tg_linked) {
     box.append(
-      el("p", "muted", t("tg_linked")),
-      button(t("tg_unlink"), "mini danger", () =>
+      el("p", "muted", "Telegram привязан."),
+      button("Отвязать", "mini danger", () =>
         act("/api/auth/tg", { method: "DELETE" }, async () => {
           await refreshMe();
           renderProfile();
@@ -763,14 +522,14 @@ function renderProfile() {
     return;
   }
   box.append(
-    el("p", "muted", t("tg_hint")),
-    button(t("tg_get_code"), "mini", () =>
+    el("p", "muted", "Получите код и отправьте боту: /link КОД"),
+    button("Получить код", "mini", () =>
       act("/api/auth/tg-code", { method: "POST" }, (d) => {
         const code = el("div", "token-box");
         code.append(
           el("span", "token mono", d.code),
-          el("span", "muted-inline", t("tg_valid", { n: d.minutes })),
-          button(t("copy"), "mini", () => copy(d.code))
+          el("span", "muted-inline", `действует ${d.minutes} минут`),
+          button("Копировать", "mini", () => copy(d.code))
         );
         box.append(code);
       })
@@ -785,29 +544,26 @@ $("password-form").addEventListener("submit", async (e) => {
   if (ok) {
     $("pw-current").value = "";
     $("pw-new").value = "";
-    toast(t("pw_changed"));
+    toast("Пароль изменен");
   }
 });
 
 function renderFile(f) {
   const li = el("li", `file ${f.status}`);
   const busy = BUSY.includes(f.status);
-  let meta = t(`status_${f.status}`);
-  if (busy && f.progress > 0) meta = `${meta} ${f.progress}%`;
+  let meta = STATUS[f.status] || f.status;
+  if (busy && f.progress > 0) meta = `${STATUS[f.status]} ${f.progress}%`;
   if (f.status === "done") {
-    meta = t("file_rows", { n: f.rows_count });
+    meta = `строк ${f.rows_count}`;
     if (f.packed && f.packed_bytes > 0) {
-      meta += ", " + t("file_packed_size", {
-        raw: size(f.raw_bytes),
-        packed: size(f.packed_bytes),
-        ratio: (f.raw_bytes / f.packed_bytes).toFixed(1),
-      });
+      meta += `, сжато ${size(f.raw_bytes)} → ${size(f.packed_bytes)} (x${(f.raw_bytes / f.packed_bytes).toFixed(1)})`;
     } else if (f.packed) {
-      meta += ", " + t("file_packed");
+      meta += ", сжато";
     }
   }
   const head = el("div", "file-head");
   head.append(el("span", "file-name", f.name), el("span", "file-meta", meta));
+
   const fill = el("div", "bar-fill");
   if (busy && f.progress === 0) fill.classList.add("indeterminate");
   else fill.style.width = f.status === "done" ? "100%" : `${f.progress}%`;
@@ -820,22 +576,26 @@ function renderFile(f) {
     if (f.status === "done") {
       const kind = f.packed ? "unpack" : "pack";
       actions.append(
-        button(t(kind), "link", () => act(`/api/compress/files/${f.id}/${kind}`, { method: "POST" }, loadFiles))
+        button(f.packed ? "Распаковать" : "Сжать", "link", () =>
+          act(`/api/compress/files/${f.id}/${kind}`, { method: "POST" }, loadFiles)
+        )
       );
     } else {
       actions.append(
-        button(t("retry"), "link", () => act(`/api/files/${f.id}/retry`, { method: "POST" }, loadFiles))
+        button("Повторить", "link", () =>
+          act(`/api/files/${f.id}/retry`, { method: "POST" }, loadFiles)
+        )
       );
     }
     actions.append(
-      button(t("delete"), "link", () => {
-        if (!confirm(t("delete_file_q", { name: f.name }))) return;
+      button("Удалить", "link", () => {
+        if (!confirm(`Удалить файл «${f.name}» и все его записи?`)) return;
         act(`/api/files/${f.id}`, { method: "DELETE" }, loadFiles);
       })
     );
     li.append(actions);
   }
-  if (f.error) li.append(el("div", "file-error", errorText(f.error)));
+  if (f.error) li.append(el("div", "file-error", f.error));
   return li;
 }
 
@@ -850,12 +610,11 @@ async function loadFiles() {
     $("stats").textContent = "";
     return;
   }
-  let text = t("files_stats", { files: s.files, packed: s.packed_files });
+  let text = `Файлов: ${s.files}, сжато: ${s.packed_files}`;
   if (s.packed_files && s.packed_bytes > 0) {
-    text += t("files_stats_size", { raw: size(s.raw_bytes), packed: size(s.packed_bytes) });
+    text += `. Сжатые данные: ${size(s.raw_bytes)} → ${size(s.packed_bytes)}`;
   }
-  text += t("files_disk", { records: size(s.records_size), blocks: size(s.blocks_size) });
-  $("stats").textContent = text;
+  $("stats").textContent = `${text}. На диске: записи ${size(s.records_size)}, сжатые блоки ${size(s.blocks_size)}`;
 }
 
 async function loadAutopack() {
@@ -874,11 +633,11 @@ $("autopack-form").addEventListener("submit", (e) => {
     days: Number($("ap-days").value),
     method: $("ap-method").value,
   };
-  act("/api/admin/settings", { method: "PUT", json }, () => toast(t("saved")));
+  act("/api/admin/settings", { method: "PUT", json }, () => toast("Сохранено"));
 });
 
 $("vocab-rebuild").addEventListener("click", () => {
-  act("/api/admin/vocab/rebuild", { method: "POST" }, () => toast(t("vocab_started")));
+  act("/api/admin/vocab/rebuild", { method: "POST" }, () => toast("Словарь обновляется в фоне"));
 });
 
 $("upload-form").addEventListener("submit", async (e) => {
@@ -886,7 +645,12 @@ $("upload-form").addEventListener("submit", async (e) => {
   const input = $("file");
   const form = new FormData();
   form.append("file", input.files[0]);
-  const ok = await act("/api/files", { method: "POST", form });
+  const ok = await act("/api/files", { method: "POST", form }, (d) => {
+    if (d && d.files) {
+      const skipped = d.skipped.length ? `, пропущено: ${d.skipped.length}` : "";
+      toast(`Из архива добавлено файлов: ${d.files.length}${skipped}`);
+    }
+  });
   if (ok) {
     input.value = "";
     loadFiles();
@@ -894,12 +658,14 @@ $("upload-form").addEventListener("submit", async (e) => {
 });
 
 $("merge-all").addEventListener("click", () => {
-  if (!confirm(t("merge_q"))) return;
+  if (!confirm("Все готовые файлы будут объединены в один и сжаты. Исходные файлы заменятся. Продолжить?")) return;
   act("/api/compress/merge", { method: "POST", json: {} }, loadFiles);
 });
 
 $("reclaim").addEventListener("click", () => {
-  act("/api/compress/reclaim", { method: "POST" }, () => toast(t("reclaim_started")));
+  act("/api/compress/reclaim", { method: "POST" }, () =>
+    toast("Запущено, поиск может ненадолго замедлиться")
+  );
 });
 
 function days(value) {
@@ -907,7 +673,7 @@ function days(value) {
 }
 
 function term(role, n) {
-  return role === "vip" && n ? t("days_short", { n }) : "";
+  return role === "vip" && n ? ` · ${n} дн.` : "";
 }
 
 function who(r) {
@@ -919,7 +685,7 @@ async function loadRequests() {
   if (!res.ok) return;
   const list = res.data;
   if (!list.length) {
-    $("requests").replaceChildren(el("li", "empty", t("requests_empty")));
+    $("requests").replaceChildren(el("li", "empty", "Заявок пока нет"));
     return;
   }
   $("requests").replaceChildren(
@@ -935,19 +701,19 @@ async function loadRequests() {
             `/api/admin/requests/${r.id}/approve`,
             { method: "POST", json: { role, days: role === "vip" ? days($("req-days").value) : null } },
             () => {
-              toast(t("approved_toast"));
+              toast("Одобрено. Бот отправит токен пользователю, он есть и во вкладке «Токены»");
               loadRequests();
             }
           );
         side.append(
-          button(t("approve_user"), "mini", () => decide("user")),
-          button(t("approve_vip"), "mini", () => decide("vip")),
-          button(t("reject"), "mini danger", () =>
+          button("Обычный", "mini", () => decide("user")),
+          button("VIP", "mini", () => decide("vip")),
+          button("Отклонить", "mini danger", () =>
             act(`/api/admin/requests/${r.id}/reject`, { method: "POST" }, loadRequests)
           )
         );
       } else {
-        side.append(el("span", `state ${r.status}`, t(r.status === "approved" ? "request_approved" : "request_rejected")));
+        side.append(el("span", `state ${r.status}`, r.status === "approved" ? "одобрена" : "отклонена"));
       }
       li.append(info, side);
       return li;
@@ -955,10 +721,19 @@ async function loadRequests() {
   );
 }
 
+async function copy(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast("Скопировано");
+  } catch {
+    toast(text);
+  }
+}
+
 function inviteState(i) {
-  if (i.used_at) return { text: `${t("token_used")}${i.used_by_name ? `: ${i.used_by_name}` : ""}`, cls: "approved" };
-  if (new Date(i.expires_at) < new Date()) return { text: t("token_expired"), cls: "rejected" };
-  return { text: t("token_active", { date: date(i.expires_at) }), cls: "pending" };
+  if (i.used_at) return { text: `использован${i.used_by_name ? `: ${i.used_by_name}` : ""}`, cls: "approved" };
+  if (new Date(i.expires_at) < new Date()) return { text: "истек", cls: "rejected" };
+  return { text: `активен до ${date(i.expires_at)}`, cls: "pending" };
 }
 
 async function loadInvites() {
@@ -966,7 +741,7 @@ async function loadInvites() {
   if (!res.ok) return;
   const list = res.data;
   if (!list.length) {
-    $("invites").replaceChildren(el("li", "empty", t("tokens_empty")));
+    $("invites").replaceChildren(el("li", "empty", "Токенов пока нет"));
     return;
   }
   $("invites").replaceChildren(
@@ -975,14 +750,14 @@ async function loadInvites() {
       const li = el("li", "item");
       const info = el("div", "item-info");
       const title = el("div", "item-title mono", i.token);
-      title.append(" ", el("span", `badge ${i.role}`, roleName(i.role) + term(i.role, i.role_days)));
+      title.append(" ", el("span", `badge ${i.role}`, ROLE[i.role] + term(i.role, i.role_days)));
       info.append(title, el("div", "item-sub", [i.note, date(i.created_at)].filter(Boolean).join(" · ")));
       const side = el("div", "item-side");
       side.append(el("span", `state ${state.cls}`, state.text));
       if (!i.used_at) {
         side.append(
-          button(t("copy"), "mini", () => copy(i.token)),
-          button(t("delete"), "mini danger", () =>
+          button("Копировать", "mini", () => copy(i.token)),
+          button("Удалить", "mini danger", () =>
             act(`/api/admin/invites/${i.id}`, { method: "DELETE" }, loadInvites)
           )
         );
@@ -1008,8 +783,8 @@ $("invite-form").addEventListener("submit", async (e) => {
   box.hidden = false;
   box.replaceChildren(
     el("span", "token mono", data.token),
-    el("span", "badge " + data.role, roleName(data.role) + term(data.role, data.role_days)),
-    button(t("copy"), "mini", () => copy(data.token))
+    el("span", "badge " + data.role, ROLE[data.role] + term(data.role, data.role_days)),
+    button("Копировать", "mini", () => copy(data.token))
   );
   loadInvites();
 });
@@ -1022,20 +797,18 @@ async function loadUsers() {
       const own = me && u.id === me.id;
       const li = el("li", "item");
       const info = el("div", "item-info");
-      const sub = [];
-      if (u.blocked) sub.push(t("blocked"));
-      sub.push(t("user_sub", { used: u.used, total: u.total }));
-      if (u.role_until) sub.push(t("until", { date: date(u.role_until) }));
-      if (u.tg_id) sub.push(t("tg_bound"));
-      sub.push(date(u.created_at));
       info.append(
-        el("div", "item-title", own ? `${u.username} (${t("you")})` : u.username),
-        el("div", "item-sub", sub.join(" · "))
+        el("div", "item-title", own ? `${u.username} (вы)` : u.username),
+        el(
+          "div",
+          "item-sub",
+          `${u.blocked ? "заблокирован · " : ""}в этом месяце ${u.used}, всего ${u.total}${u.role_until ? ` · до ${date(u.role_until)}` : ""}${u.tg_id ? " · Telegram привязан" : ""} · ${date(u.created_at)}`
+        )
       );
       const side = el("div", "item-side");
       const select = el("select");
-      for (const value of ["user", "vip", "admin"]) {
-        const option = el("option", "", roleName(value));
+      for (const [value, label] of Object.entries(ROLE)) {
+        const option = el("option", "", label);
         option.value = value;
         option.selected = value === u.role;
         select.append(option);
@@ -1044,14 +817,14 @@ async function loadUsers() {
       select.addEventListener("change", async () => {
         let n = null;
         if (select.value === "vip") {
-          const answer = prompt(t("vip_days_q"), "30");
+          const answer = prompt("На сколько дней VIP? Пусто = навсегда", "30");
           if (answer === null) {
             loadUsers();
             return;
           }
           n = days(answer.trim());
           if (answer.trim() && !n) {
-            toast(t("days_number"));
+            toast("Нужно число дней");
             loadUsers();
             return;
           }
@@ -1060,25 +833,25 @@ async function loadUsers() {
           method: "PATCH",
           json: { role: select.value, days: n },
         });
-        if (ok) toast(t("role_changed"));
+        if (ok) toast("Роль изменена");
         loadUsers();
       });
       side.append(select);
       side.append(
-        button(t("password_btn"), "mini", async () => {
-          const answer = prompt(t("new_password_q"), "");
+        button("Пароль", "mini", async () => {
+          const answer = prompt("Новый пароль (пусто = случайный)", "");
           if (answer === null) return;
           const data = await act(`/api/admin/users/${u.id}/password`, {
             method: "POST",
             json: { password: answer || null },
           });
-          if (data) prompt(t("new_password_show"), data.password);
+          if (data) prompt("Новый пароль, передайте пользователю:", data.password);
         })
       );
       if (!own && u.role !== "admin") {
         side.append(
-          button(t(u.blocked ? "unblock" : "block"), "mini", async () => {
-            if (!u.blocked && !confirm(t("block_q", { name: u.username }))) return;
+          button(u.blocked ? "Разблокировать" : "Заблокировать", "mini", async () => {
+            if (!u.blocked && !confirm(`Заблокировать ${u.username}? Его сессии закроются.`)) return;
             const ok = await act(`/api/admin/users/${u.id}/block`, {
               method: "POST",
               json: { blocked: !u.blocked },
@@ -1089,8 +862,8 @@ async function loadUsers() {
       }
       if (!own) {
         side.append(
-          button(t("delete"), "mini danger", () => {
-            if (confirm(t("delete_user_q", { name: u.username }))) {
+          button("Удалить", "mini danger", () => {
+            if (confirm(`Удалить пользователя ${u.username}?`)) {
               act(`/api/admin/users/${u.id}`, { method: "DELETE" }, loadUsers);
             }
           })
@@ -1126,12 +899,12 @@ async function loadStats() {
   const d = res.data;
   const roles = d.roles || {};
   $("stat-cards").replaceChildren(
-    statCard(t("stat_today"), d.searches_today),
-    statCard(t("stat_30"), d.searches_30d),
-    statCard(t("stat_users"), Object.values(roles).reduce((x, y) => x + y, 0)),
-    statCard(t("stat_files"), d.files.files),
-    statCard(t("stat_records"), d.files.records),
-    statCard(t("stat_db"), size(d.db_bytes))
+    statCard("поисков сегодня", d.searches_today),
+    statCard("поисков за 30 дней", d.searches_30d),
+    statCard("пользователей", Object.values(roles).reduce((x, y) => x + y, 0)),
+    statCard("файлов", d.files.files),
+    statCard("записей", d.files.records),
+    statCard("размер базы", size(d.db_bytes))
   );
   const max = Math.max(1, ...d.per_day.map((p) => p.searches));
   $("stat-chart").replaceChildren(
@@ -1142,95 +915,51 @@ async function loadStats() {
       return bar;
     })
   );
-  statRows($("stat-queries"), d.top_queries.map((q) => [q.query, q.n]), t("no_queries"));
-  statRows($("stat-users"), d.top_users.map((u) => [u.username, u.total]), t("no_data"));
-}
-
-async function loadMissed() {
-  const res = await api("/api/admin/missed");
-  if (!res.ok) return;
-  if (!res.data.length) {
-    $("missed").replaceChildren(el("li", "empty", t("missed_empty")));
-    return;
-  }
-  $("missed").replaceChildren(
-    ...res.data.map((m) => {
-      const li = el("li", "item");
-      const info = el("div", "item-info");
-      info.append(el("div", "item-title", m.query), el("div", "item-sub", date(m.last)));
-      const side = el("div", "item-side");
-      side.append(el("span", "state", t("missed_times", { n: m.n })));
-      li.append(info, side);
-      return li;
-    })
+  statRows(
+    $("stat-queries"),
+    d.top_queries.map((q) => [q.query, q.n]),
+    "Пока нет запросов"
+  );
+  statRows(
+    $("stat-users"),
+    d.top_users.map((u) => [u.username, u.total]),
+    "Пока нет данных"
   );
 }
 
-$("missed-clear").addEventListener("click", () => {
-  if (confirm(t("history_clear_q"))) act("/api/admin/missed", { method: "DELETE" }, loadMissed);
-});
-
-function backupStatusText(s) {
-  if (!s) return "";
-  const action = t(s.action === "restore" ? "act_restore" : "act_backup");
-  const file = s.file || "";
-  if (s.state === "running") return t("backup_running", { action, file });
-  if (s.state === "ok") {
-    const text = t("backup_ok", { action, file });
-    return s.action === "restore" ? `${text}, ${t("backup_restart")}` : text;
-  }
-  return t("backup_failed", { action, file, message: s.message || "" });
-}
-
-async function loadBackups() {
-  const res = await api("/api/admin/backups");
-  if (!res.ok) return;
-  const box = $("backup-status");
-  const text = backupStatusText(res.data.status);
-  box.hidden = !text;
-  box.textContent = text;
-  box.className = `status ${res.data.status ? res.data.status.state : ""}`;
-  const items = res.data.items;
-  if (!items.length) {
-    $("backups").replaceChildren(el("li", "empty", t("backup_empty")));
-    return;
-  }
-  $("backups").replaceChildren(
-    ...items.map((b) => {
-      const li = el("li", "item");
-      const info = el("div", "item-info");
-      info.append(el("div", "item-title mono", b.name), el("div", "item-sub", `${date(b.at * 1000)} · ${size(b.size)}`));
-      const side = el("div", "item-side");
-      side.append(
-        button(t("backup_download"), "mini", () =>
-          download(`/api/admin/backups/${encodeURIComponent(b.name)}`, b.name)
-        ),
-        button(t("backup_restore"), "mini danger", () => {
-          if (!confirm(t("backup_confirm", { name: b.name }))) return;
-          act("/api/admin/backups/restore", { method: "POST", json: { name: b.name } }, () => {
-            toast(t("backup_queued"));
-            loadBackups();
-          });
-        })
-      );
-      li.append(info, side);
-      return li;
-    })
-  );
-}
-
-$("backup-create").addEventListener("click", () => {
-  act("/api/admin/backups", { method: "POST" }, () => {
-    toast(t("backup_queued"));
-    setTimeout(loadBackups, 1500);
-  });
-});
+const ACTION = {
+  register: "регистрация",
+  login: "вход",
+  login_failed: "неудачный вход",
+  password_changed: "смена пароля",
+  password_reset: "сброс пароля",
+  tg_linked: "привязка Telegram",
+  tg_unlinked: "отвязка Telegram",
+  role_changed: "смена роли",
+  user_deleted: "удаление пользователя",
+  invite_created: "токен создан",
+  invite_deleted: "токен удален",
+  request_approved: "заявка одобрена",
+  request_rejected: "заявка отклонена",
+  settings_changed: "настройки",
+  file_uploaded: "загрузка файла",
+  file_pack: "сжатие файла",
+  file_unpack: "распаковка файла",
+  files_merged: "объединение файлов",
+  reclaim: "освобождение места",
+  autopack: "автосжатие",
+  vocab_rebuilt: "словарь поиска",
+  file_retry: "повтор обработки",
+  file_deleted: "удаление файла",
+  file_recovered: "восстановление файла",
+  user_blocked: "блокировка",
+  user_unblocked: "разблокировка",
+};
 
 function auditRow(e) {
   const li = el("li", "item");
   const info = el("div", "item-info");
-  const label = DICT[LANG][`a_${e.action}`] || e.action;
-  const title = `${label}${e.actor_name ? ` · ${e.actor_name}` : ""}`;
+  const title = `${ACTION[e.action] || e.action}${e.actor_name ? ` · ${e.actor_name}` : ""}`;
   const parts = e.details
     ? Object.entries(e.details)
         .filter(([, v]) => v !== null && v !== "")
@@ -1251,13 +980,13 @@ async function loadAudit(reset) {
   if (!res.ok) return;
   const rows = res.data.items.map(auditRow);
   if (reset) {
-    $("audit").replaceChildren(...(rows.length ? rows : [el("li", "empty", t("audit_empty"))]));
+    $("audit").replaceChildren(...(rows.length ? rows : [el("li", "empty", "Записей нет")]));
     const kinds = await api("/api/admin/audit/actions");
     if (kinds.ok) {
       const select = $("audit-action");
       const value = select.value;
-      select.replaceChildren(new Option(t("all_actions"), ""));
-      kinds.data.forEach((a) => select.append(new Option(DICT[LANG][`a_${a}`] || a, a)));
+      select.replaceChildren(new Option("Все действия", ""));
+      kinds.data.forEach((a) => select.append(new Option(ACTION[a] || a, a)));
       select.value = value;
     }
   } else {
@@ -1281,7 +1010,6 @@ document.querySelectorAll("[data-auth]").forEach((node) => {
     document.querySelectorAll("[data-auth]").forEach((n) => n.classList.toggle("active", n === node));
     $("login-form").hidden = mode !== "login";
     $("register-form").hidden = mode !== "register";
-    $("auth").querySelector("h1").textContent = t(mode === "login" ? "auth_title" : "register");
   });
 });
 
@@ -1311,31 +1039,8 @@ $("register-form").addEventListener("submit", (e) => {
 $("logout").addEventListener("click", async () => {
   await api("/api/auth/logout", { method: "POST" });
   me = null;
-  current = null;
   $("results").replaceChildren();
-  $("result-tools").hidden = true;
-  $("more").hidden = true;
   showAuth();
-});
-
-function refreshLang() {
-  applyStatic();
-  document.title = t("title");
-  if (!me) return;
-  renderMe();
-  renderNav();
-  switchTab(tab);
-  if (current && current.items.length) {
-    refreshTools();
-    drawResults();
-  }
-}
-
-document.querySelectorAll("[data-lang]").forEach((node) => {
-  node.addEventListener("click", () => {
-    setLang(node.dataset.lang);
-    refreshLang();
-  });
 });
 
 async function boot() {
@@ -1351,7 +1056,4 @@ async function boot() {
   showApp();
 }
 
-setLang(detectLang());
-applyStatic();
-document.title = t("title");
 boot();

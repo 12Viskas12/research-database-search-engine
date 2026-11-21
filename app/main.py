@@ -2,15 +2,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.core import logs
-from app.core.config import settings
 from app.core.redis_client import close_redis, get_redis
 from app.db import database
 from app.routers import admin, auth, compress, files, pages, search
-from app.services import auth_service, metrics_service, vocab_service
+from app.services import auth_service, vocab_service
 
 
 async def backfill_vocab():
@@ -51,17 +50,6 @@ async def health():
     except Exception:
         return JSONResponse({"status": "down"}, status_code=503)
     return {"status": "ok"}
-
-
-@app.get("/metrics")
-async def metrics_endpoint(request: Request):
-    if settings.metrics_token:
-        header = request.headers.get("authorization", "")
-        if header != f"Bearer {settings.metrics_token}":
-            return JSONResponse({"detail": "Forbidden"}, status_code=403)
-    return PlainTextResponse(
-        await metrics_service.collect(), media_type="text/plain; version=0.0.4"
-    )
 
 
 app.mount(

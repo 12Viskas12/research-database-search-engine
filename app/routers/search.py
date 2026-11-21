@@ -7,7 +7,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from app.core.deps import current_user
-from app.services import auth_service, history_service, link_service, search_service
+from app.services import auth_service, history_service, search_service
 
 router = APIRouter(prefix="/api")
 
@@ -34,28 +34,17 @@ async def search(
     offset: int = Query(0, ge=0, le=1000),
     files: str | None = None,
     search_id: int | None = None,
-    hidden: bool = False,
     user=Depends(current_user),
 ):
-    if hidden and user["role"] != "admin":
-        raise HTTPException(403, "Admin only")
     ids = parse_files(files)
     free = offset > 0 and await history_service.valid(search_id, user["id"], q, ids)
     quota = await (auth_service.quota_now(user) if free else auth_service.consume(user))
-    result = await search_service.search(q, limit, offset, ids, hidden)
-    raw = len(result["items"])
-    if hidden:
-        items = [
-            {**i, "own_ids": [i["id"]], "records": [{**i, "file": "", "own": True}]}
-            for i in result["items"]
-        ]
-    else:
-        items = await link_service.link(result["items"])
+    result = await search_service.search(q, limit, offset, ids)
     if not free:
-        search_id = await history_service.add(user["id"], q, ids, "web", raw)
-        if raw == 0 and not hidden:
-            await history_service.missed(user["id"], q, ids, "web")
-    return {**result, "items": items, "raw": raw, "quota": quota, "search_id": search_id}
+        search_id = await history_service.add(
+            user["id"], q, ids, "web", len(result["items"])
+        )
+    return {**result, "quota": quota, "search_id": search_id}
 
 
 @router.get("/export")
@@ -95,9 +84,9 @@ async def bulk(body: BulkBody, user=Depends(current_user)):
         if value and value not in values:
             values.append(value)
     if not values:
-        raise HTTPException(400, "The list is empty")
+        raise HTTPException(400, "Список пуст")
     if len(values) > BULK_MAX:
-        raise HTTPException(400, f"At most {BULK_MAX} values at once")
+        raise HTTPException(400, f"Не больше {BULK_MAX} значений за раз")
     quota = await auth_service.consume(user)
     ids = parse_files(body.files)
     gate = asyncio.Semaphore(4)
@@ -137,5 +126,5 @@ async def lucky(user=Depends(current_user)):
     quota = await auth_service.consume(user)
     item = await search_service.lucky()
     if item is None:
-        raise HTTPException(404, "The database is empty")
+        raise HTTPException(404, "База пуста")
     return {"item": item, "quota": quota}

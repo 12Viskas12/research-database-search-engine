@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import os
 import re
@@ -10,7 +11,7 @@ from app.core.config import settings
 from app.core.deps import admin_user
 from app.core.redis_client import get_redis
 from app.db import database
-from app.services import audit_service
+from app.services import archive_service, audit_service
 from app.parsers.factory import get_parser
 
 router = APIRouter(prefix="/api/files", dependencies=[Depends(admin_user)])
@@ -29,11 +30,13 @@ async def upload(file: UploadFile = File(...), admin=Depends(admin_user)):
             digest.update(chunk)
             await out.write(chunk)
     sha = digest.hexdigest()
+    if archive_service.archive_kind(file.filename):
+        return await upload_archive(path, file.filename, admin)
     duplicate = await database.find_duplicate(sha)
     if duplicate:
         os.remove(path)
         raise HTTPException(
-            409, f"This file is already uploaded: {duplicate['name']} (id {duplicate['id']})"
+            409, f"Такой файл уже загружен: {duplicate['name']} (id {duplicate['id']})"
         )
     try:
         get_parser(path)
@@ -47,6 +50,41 @@ async def upload(file: UploadFile = File(...), admin=Depends(admin_user)):
     return {"id": file_id, "status": "pending"}
 
 
+async def upload_archive(path, archive_name, admin):
+    try:
+        try:
+            extracted, skipped = await asyncio.to_thread(
+                archive_service.extract, path, archive_name, settings.upload_dir
+            )
+        except archive_service.ArchiveError as e:
+            raise HTTPException(400, str(e))
+    finally:
+        os.remove(path)
+    created = []
+    redis = await get_redis()
+    for item in extracted:
+        duplicate = await database.find_duplicate(item["sha256"])
+        if duplicate:
+            os.remove(item["path"])
+            skipped.append(
+                {"name": item["name"], "reason": f"Уже загружен: {duplicate['name']}"}
+            )
+            continue
+        file_id = await database.create_file(item["name"], item["path"], item["sha256"])
+        await redis.enqueue_job("process_file", file_id)
+        await audit_service.log(
+            admin, "file_uploaded", file=file_id, name=item["name"], archive=archive_name
+        )
+        created.append({"id": file_id, "name": item["name"], "status": "pending"})
+    if not created:
+        raise HTTPException(
+            400,
+            "В архиве нет новых файлов поддерживаемых форматов"
+            + (f" (пропущено: {len(skipped)})" if skipped else ""),
+        )
+    return {"archive": archive_name, "files": created, "skipped": skipped}
+
+
 @router.get("")
 async def list_files():
     return await database.list_files()
@@ -58,9 +96,9 @@ async def retry(file_id: int, admin=Depends(admin_user)):
     if record is None:
         raise HTTPException(404, "File not found")
     if record["status"] != "failed":
-        raise HTTPException(409, "Only a failed file can be retried")
+        raise HTTPException(409, "Повторить можно только файл с ошибкой")
     if not record["path"] or not os.path.exists(record["path"]):
-        raise HTTPException(400, "The source file is gone, upload it again")
+        raise HTTPException(400, "Исходный файл удален, загрузите его заново")
     await database.set_file_status(file_id, "pending")
     redis = await get_redis()
     await redis.enqueue_job("process_file", file_id)
@@ -74,7 +112,7 @@ async def delete(file_id: int, admin=Depends(admin_user)):
     if record is None:
         raise HTTPException(404, "File not found")
     if record["status"] not in ("done", "failed"):
-        raise HTTPException(409, "The file is being processed now")
+        raise HTTPException(409, "Файл сейчас обрабатывается")
     await database.set_file_status(file_id, "deleting")
     redis = await get_redis()
     await redis.enqueue_job("delete_file", file_id)

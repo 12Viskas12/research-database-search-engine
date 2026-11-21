@@ -4,9 +4,7 @@ import os
 import sys
 import time
 
-from app.core import metrics
-
-SKIP = {"/health", "/metrics"}
+SKIP = {"/health"}
 
 
 class JsonFormatter(logging.Formatter):
@@ -53,12 +51,6 @@ async def request_logger(request, call_next):
         )
         raise
     path = request.url.path
-    route = request.scope.get("route")
-    template = getattr(route, "path", None) or "unmatched"
-    if path not in SKIP and not path.startswith("/static/"):
-        metrics.observe(
-            request.method, template, response.status_code, time.perf_counter() - started
-        )
     if path not in SKIP and not path.startswith("/static/"):
         logging.getLogger("app.request").info(
             "request",
