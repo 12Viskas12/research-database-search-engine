@@ -1,7 +1,7 @@
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 
-from app.parsers.base import BaseParser
+from app.parsers.base import TableParser
 
 NS = {
     "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
@@ -14,8 +14,7 @@ MAX_REPEAT = 256
 
 def cell_value(cell):
     parts = ["".join(p.itertext()) for p in cell.findall(f"{X}p")]
-    text = "\n".join(parts).strip()
-    return text
+    return "\n".join(parts).strip()
 
 
 def row_values(row):
@@ -31,23 +30,31 @@ def row_values(row):
     return values
 
 
-class OdsParser(BaseParser):
-    def parse(self):
+class OdsParser(TableParser):
+    extensions = (".ods",)
+
+    def rows(self):
         with zipfile.ZipFile(self.path) as z:
-            root = ET.fromstring(z.read("content.xml"))
-        for sheet in root.iter(f"{T}table"):
-            header = None
-            for row in sheet.iter(f"{T}table-row"):
-                values = row_values(row)
-                if not any(values):
-                    continue
-                if header is None:
-                    header = [h or f"col{i + 1}" for i, h in enumerate(values)]
-                    continue
-                repeat = min(int(row.get(f"{T}number-rows-repeated", "1")), MAX_REPEAT)
-                record = {
-                    (header[i] if i < len(header) else f"col{i + 1}"): v
-                    for i, v in enumerate(values)
-                }
-                for _ in range(repeat):
-                    yield dict(record)
+            total = max(1, z.getinfo("content.xml").file_size)
+            with z.open("content.xml") as stream:
+                header, seen = None, 0
+                for event, element in ET.iterparse(stream, events=("start", "end")):
+                    if event == "start":
+                        if element.tag == f"{T}table":
+                            header = None
+                        continue
+                    if element.tag != f"{T}table-row":
+                        continue
+                    seen += 1
+                    if seen % 500 == 0:
+                        self.fraction = min(0.99, stream.tell() / total)
+                    values = row_values(element)
+                    if any(values):
+                        if header is None:
+                            header = self.header_of(values)
+                        else:
+                            repeat = min(int(element.get(f"{T}number-rows-repeated", "1")), MAX_REPEAT)
+                            record = self.record_of(header, values)
+                            for _ in range(repeat):
+                                yield dict(record)
+                    element.clear()

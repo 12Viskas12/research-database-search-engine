@@ -1,19 +1,19 @@
 :root {
-  --bg: #07070b;
-  --bg2: #0c0c13;
-  --panel: #101018;
-  --panel2: #15151f;
-  --border: #23232f;
-  --text: #ecebf5;
-  --muted: #8d8aa3;
-  --accent: #8b5cf6;
-  --accent2: #c084fc;
-  --accent-soft: #a78bfa;
-  --danger: #f87171;
-  --ok: #4ade80;
-  --warn: #fbbf24;
-  --radius: 14px;
-  --shadow: 0 10px 40px rgba(0, 0, 0, 0.45);
+  --bg: #020503;
+  --bg2: #050a06;
+  --panel: #07100a;
+  --panel2: #0a160d;
+  --border: #12351c;
+  --text: #b8ffc9;
+  --muted: #4fa569;
+  --accent: #00ff66;
+  --accent2: #7dff9b;
+  --accent-soft: #3dff85;
+  --danger: #ff4d4d;
+  --ok: #00ff66;
+  --warn: #e6ff3d;
+  --radius: 3px;
+  --shadow: 0 0 24px rgba(0, 255, 102, 0.08);
 }
 
 * {
@@ -27,13 +27,13 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: 15px;
+  font-family: "JetBrains Mono", "Fira Code", "Source Code Pro", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--text);
   background:
-    radial-gradient(900px 420px at 15% -10%, rgba(139, 92, 246, 0.16), transparent 60%),
-    radial-gradient(700px 380px at 95% 0%, rgba(192, 132, 252, 0.08), transparent 55%),
+    radial-gradient(900px 420px at 15% -10%, rgba(0, 255, 102, 0.16), transparent 60%),
+    radial-gradient(700px 380px at 95% 0%, rgba(125, 255, 155, 0.08), transparent 55%),
     var(--bg);
   background-attachment: fixed;
 }
@@ -62,7 +62,7 @@ h2 {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(7, 7, 11, 0.72);
+  background: rgba(2, 5, 3, 0.72);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border);
@@ -93,7 +93,7 @@ h2 {
   height: 30px;
   border-radius: 9px;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
-  box-shadow: 0 0 22px rgba(139, 92, 246, 0.55);
+  box-shadow: 0 0 22px rgba(0, 255, 102, 0.55);
   position: relative;
 }
 
@@ -140,7 +140,7 @@ h2 {
 .lang {
   display: flex;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -161,7 +161,7 @@ h2 {
 
 .lang-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: #00140a;
 }
 
 .nav {
@@ -183,7 +183,7 @@ h2 {
   background: transparent;
   color: var(--muted);
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: 2px;
   padding: 7px 14px;
   font-weight: 500;
   box-shadow: none;
@@ -195,9 +195,9 @@ h2 {
 }
 
 .tab.active {
-  color: #fff;
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.9), rgba(168, 85, 247, 0.75));
-  box-shadow: 0 4px 18px rgba(139, 92, 246, 0.35);
+  color: #00140a;
+  background: linear-gradient(135deg, rgba(0, 255, 102, 0.9), rgba(0, 200, 80, 0.75));
+  box-shadow: 0 4px 18px rgba(0, 255, 102, 0.35);
 }
 
 .page {
@@ -241,7 +241,7 @@ textarea {
   background: var(--bg2);
   color: var(--text);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 3px;
   padding: 10px 12px;
   font: inherit;
   min-width: 0;
@@ -253,7 +253,7 @@ select:focus,
 textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+  box-shadow: 0 0 0 3px rgba(0, 255, 102, 0.2);
 }
 
 input[type="checkbox"] {
@@ -272,11 +272,11 @@ button {
   font: inherit;
   cursor: pointer;
   border: 0;
-  border-radius: 10px;
+  border-radius: 3px;
   padding: 10px 18px;
   font-weight: 600;
-  color: #fff;
-  background: linear-gradient(135deg, var(--accent), #7c3aed);
+  color: #00140a;
+  background: linear-gradient(135deg, var(--accent), #00c853);
   box-shadow: 0 4px 16px rgba(124, 58, 237, 0.3);
   transition: transform 0.1s, filter 0.15s, box-shadow 0.15s;
 }
@@ -390,7 +390,7 @@ button.link:hover {
 .status {
   margin: 0;
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: 3px;
   border: 1px solid var(--border);
   background: var(--panel);
   font-size: 14px;
@@ -445,7 +445,7 @@ button.link:hover {
   grid-template-columns: 1fr 1fr;
   background: var(--bg2);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 3px;
   padding: 3px;
 }
 
@@ -469,7 +469,7 @@ button.link:hover {
   border-radius: 18px;
   border: 1px solid var(--border);
   background:
-    radial-gradient(500px 160px at 20% 0%, rgba(139, 92, 246, 0.18), transparent 70%),
+    radial-gradient(500px 160px at 20% 0%, rgba(0, 255, 102, 0.18), transparent 70%),
     linear-gradient(180deg, var(--panel2), var(--panel));
   box-shadow: var(--shadow);
 }
@@ -485,7 +485,7 @@ button.link:hover {
 
 .hero-box:focus-within {
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2);
+  box-shadow: 0 0 0 3px rgba(0, 255, 102, 0.2);
 }
 
 .hero-box input {
@@ -530,7 +530,7 @@ button.link:hover {
   height: 6px;
   background: var(--bg2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 2px;
   overflow: hidden;
 }
 
@@ -538,7 +538,7 @@ button.link:hover {
   height: 100%;
   width: 0;
   background: linear-gradient(90deg, var(--accent), var(--accent2));
-  border-radius: 999px;
+  border-radius: 2px;
   transition: width 0.4s;
 }
 
@@ -601,7 +601,7 @@ details#cols summary {
   gap: 6px;
   background: var(--panel2);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 3px;
   box-shadow: var(--shadow);
 }
 
@@ -624,7 +624,7 @@ details#cols summary {
 }
 
 .card:hover {
-  border-color: rgba(139, 92, 246, 0.55);
+  border-color: rgba(0, 255, 102, 0.55);
 }
 
 @keyframes rise {
@@ -674,8 +674,8 @@ details#cols summary {
 }
 
 mark {
-  background: rgba(139, 92, 246, 0.35);
-  color: #fff;
+  background: rgba(0, 255, 102, 0.35);
+  color: #eafff0;
   border-radius: 4px;
   padding: 0 2px;
 }
@@ -693,7 +693,7 @@ mark {
   line-height: 14px;
   text-align: center;
   color: var(--accent2);
-  background: rgba(139, 92, 246, 0.16);
+  background: rgba(0, 255, 102, 0.16);
   border-radius: 7px;
   vertical-align: baseline;
   position: relative;
@@ -719,7 +719,7 @@ mark {
   color: var(--muted);
   background: var(--bg2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: 2px;
 }
 
 .card-foot > .chip:only-child,
@@ -735,7 +735,7 @@ mark {
   height: 18px;
   font-size: 11px;
   font-weight: 700;
-  color: #fff;
+  color: #00140a;
   background: var(--accent);
   border-radius: 50%;
 }
@@ -753,7 +753,7 @@ mark {
 .rec {
   background: var(--bg);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 3px;
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -793,7 +793,7 @@ mark {
   padding: 2px 10px;
   font-size: 12px;
   font-weight: 600;
-  border-radius: 999px;
+  border-radius: 2px;
   color: var(--muted);
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -801,12 +801,18 @@ mark {
 
 .badge.vip {
   color: var(--accent2);
-  border-color: rgba(139, 92, 246, 0.5);
-  background: rgba(139, 92, 246, 0.12);
+  border-color: rgba(0, 255, 102, 0.5);
+  background: rgba(0, 255, 102, 0.12);
+}
+
+.badge.creator {
+  color: #00140a;
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--warn), var(--accent));
 }
 
 .badge.admin {
-  color: #fff;
+  color: #00140a;
   border-color: transparent;
   background: linear-gradient(135deg, var(--accent), var(--accent2));
 }
@@ -833,7 +839,7 @@ mark {
   padding: 12px 14px;
   background: linear-gradient(180deg, var(--panel2), var(--panel));
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 3px;
 }
 
 .item-info {
@@ -887,8 +893,8 @@ mark {
   flex-wrap: wrap;
   padding: 12px 14px;
   background: var(--bg2);
-  border: 1px dashed rgba(139, 92, 246, 0.5);
-  border-radius: 12px;
+  border: 1px dashed rgba(0, 255, 102, 0.5);
+  border-radius: 3px;
 }
 
 .token {
@@ -901,7 +907,7 @@ mark {
   padding: 14px 16px;
   background: linear-gradient(180deg, var(--panel2), var(--panel));
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 3px;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -944,7 +950,7 @@ mark {
   border-radius: var(--radius);
   border: 1px solid var(--border);
   background:
-    radial-gradient(160px 70px at 0% 0%, rgba(139, 92, 246, 0.16), transparent 70%),
+    radial-gradient(160px 70px at 0% 0%, rgba(0, 255, 102, 0.16), transparent 70%),
     linear-gradient(180deg, var(--panel2), var(--panel));
 }
 
@@ -1029,7 +1035,7 @@ mark {
   color: var(--text);
   background: var(--panel2);
   border: 1px solid var(--accent);
-  border-radius: 12px;
+  border-radius: 3px;
   box-shadow: var(--shadow);
   opacity: 0;
   pointer-events: none;
@@ -1074,4 +1080,25 @@ mark {
   .edit-row {
     grid-template-columns: 1fr;
   }
+}
+
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 100;
+  background: repeating-linear-gradient(0deg, rgba(0, 255, 102, 0.025) 0, rgba(0, 255, 102, 0.025) 1px, transparent 1px, transparent 3px);
+}
+
+h1,
+h2,
+.brand {
+  text-shadow: 0 0 8px rgba(0, 255, 102, 0.45);
+}
+
+input,
+select,
+textarea {
+  caret-color: var(--accent);
 }

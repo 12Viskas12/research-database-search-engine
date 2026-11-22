@@ -1,43 +1,54 @@
 import csv
-import io
+import itertools
 
-from app.parsers.base import BaseParser
-from app.parsers.utils import KEY_VALUE, detect_delimiter, read_text
+from app.parsers.text import TextParser
+from app.parsers.utils import KEY_VALUE, detect_delimiter
+
+HEAD_LINES = 200
 
 
-class TxtParser(BaseParser):
-    def parse(self):
-        text = read_text(self.path)
-        lines = text.splitlines()
-        head = [x for x in lines[:200] if x.strip()]
+class TxtParser(TextParser):
+    extensions = (".txt", ".text", ".log", ".md", ".dat")
 
-        delimiter = detect_delimiter(head)
-        if delimiter:
-            yield from csv.DictReader(io.StringIO(text, newline=""), delimiter=delimiter)
-            return
+    def rows(self):
+        with self.open_text() as stream:
+            buffered, head = [], []
+            for line in stream:
+                buffered.append(line)
+                if line.strip():
+                    head.append(line.rstrip("\r\n"))
+                if len(head) >= HEAD_LINES:
+                    break
+            lines = itertools.chain(buffered, stream)
+            delimiter = detect_delimiter(head)
+            if delimiter:
+                yield from csv.DictReader(lines, delimiter=delimiter)
+            elif head and sum(1 for x in head if KEY_VALUE.match(x)) / len(head) >= 0.8:
+                yield from self.blocks(lines)
+            else:
+                yield from self.plain(lines)
 
-        if head and sum(1 for x in head if KEY_VALUE.match(x)) / len(head) >= 0.8:
-            yield from self._blocks(lines)
-            return
-
+    @staticmethod
+    def plain(lines):
         for line in lines:
             line = line.strip()
             if line:
                 yield {"text": line}
 
-    def _blocks(self, lines):
-        record = {}
-        last = None
+    @staticmethod
+    def blocks(lines):
+        record, last = {}, None
         for line in lines:
+            line = line.rstrip("\r\n")
             if not line.strip():
                 if record:
                     yield record
                 record, last = {}, None
                 continue
-            m = KEY_VALUE.match(line)
-            if m:
-                last = m.group(1)
-                record[last] = m.group(2)
+            match = KEY_VALUE.match(line)
+            if match:
+                last = match.group(1)
+                record[last] = match.group(2)
             elif last:
                 record[last] = f"{record[last]} {line.strip()}"
             else:

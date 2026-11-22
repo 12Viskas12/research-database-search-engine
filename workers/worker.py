@@ -6,12 +6,15 @@ from app.db import database
 from workers.tasks import (
     autopack_files,
     delete_file,
+    download_file,
+    expand_archive,
     merge_files,
     pack_file,
     process_file,
     rebuild_vocab,
     reclaim_space,
     recover,
+    scan_inbox,
     unpack_file,
 )
 
@@ -35,11 +38,16 @@ class WorkerSettings:
         reclaim_space,
         rebuild_vocab,
         delete_file,
+        download_file,
+        expand_archive,
     ]
-    cron_jobs = [cron(autopack_files, minute={0, 10, 20, 30, 40, 50}, timeout=7200)]
+    cron_jobs = [
+        cron(autopack_files, minute={0, 10, 20, 30, 40, 50}, timeout=7200),
+        cron(scan_inbox, timeout=600),
+    ]
     redis_settings = redis_settings()
     on_startup = startup
     on_shutdown = shutdown
     max_jobs = 4
-    job_timeout = 7200
+    job_timeout = 21600
     health_check_interval = 30

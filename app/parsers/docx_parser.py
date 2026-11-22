@@ -1,7 +1,7 @@
-import zipfile
 import xml.etree.ElementTree as ET
+import zipfile
 
-from app.parsers.base import BaseParser
+from app.parsers.base import TableParser
 
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -10,8 +10,10 @@ def text_of(element):
     return "".join(t.text or "" for t in element.iter(f"{W}t")).strip()
 
 
-class DocxParser(BaseParser):
-    def parse(self):
+class DocxParser(TableParser):
+    extensions = (".docx",)
+
+    def rows(self):
         with zipfile.ZipFile(self.path) as z:
             root = ET.fromstring(z.read("word/document.xml"))
         body = root.find(f"{W}body")
@@ -23,21 +25,15 @@ class DocxParser(BaseParser):
                 if text:
                     yield {"text": text}
             elif node.tag == f"{W}tbl":
-                yield from self._table(node)
+                yield from self.table(node)
 
-    def _table(self, table):
-        rows = [
-            [text_of(c) for c in tr.findall(f"{W}tc")]
-            for tr in table.findall(f"{W}tr")
-        ]
+    def table(self, table):
+        rows = [[text_of(c) for c in tr.findall(f"{W}tc")] for tr in table.findall(f"{W}tr")]
         rows = [r for r in rows if any(r)]
         if len(rows) < 2:
             for row in rows:
                 yield {"text": " ".join(row)}
             return
-        header = [h or f"col{i + 1}" for i, h in enumerate(rows[0])]
+        header = self.header_of(rows[0])
         for row in rows[1:]:
-            yield {
-                (header[i] if i < len(header) else f"col{i + 1}"): v
-                for i, v in enumerate(row)
-            }
+            yield self.record_of(header, row)

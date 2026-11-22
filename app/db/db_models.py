@@ -154,7 +154,36 @@ CREATE TABLE IF NOT EXISTS stats_daily (
 );
 """
 
+MORE = """
+ALTER TABLE records ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
+
+CREATE TABLE IF NOT EXISTS missed_queries (
+    id BIGSERIAL PRIMARY KEY,
+    query TEXT NOT NULL,
+    files TEXT NOT NULL DEFAULT '',
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    source TEXT NOT NULL DEFAULT 'web',
+    at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS missed_query_idx ON missed_queries (lower(query));
+
+ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS lang TEXT NOT NULL DEFAULT 'uk';
+"""
+
+CREATOR = """
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('user', 'vip', 'admin', 'creator'));
+ALTER TABLE invites DROP CONSTRAINT IF EXISTS invites_role_check;
+ALTER TABLE invites ADD CONSTRAINT invites_role_check CHECK (role IN ('user', 'vip', 'admin', 'creator'));
+UPDATE users SET role = 'creator'
+WHERE id = (SELECT min(id) FROM users WHERE role = 'admin')
+AND NOT EXISTS (SELECT 1 FROM users WHERE role = 'creator');
+"""
+
 MIGRATIONS = [
     (1, "baseline", SCHEMA),
     (2, "hash, blocking, stats", FEATURES),
+    (3, "hidden records, missed queries, request language", MORE),
+    (4, "creator role", CREATOR),
 ]

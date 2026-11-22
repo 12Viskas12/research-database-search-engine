@@ -1,17 +1,22 @@
 import csv
+import sys
 
-from app.parsers.base import BaseParser
-from app.parsers.utils import detect_encoding
+from app.parsers.text import TextParser
+
+csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
 
 
-class CsvParser(BaseParser):
-    def parse(self):
-        with open(self.path, encoding=detect_encoding(self.path), newline="") as f:
-            sample = f.read(65536)
-            f.seek(0)
-            try:
-                dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
-            except csv.Error:
-                dialect = csv.excel
-            for row in csv.DictReader(f, dialect=dialect):
+class CsvParser(TextParser):
+    extensions = (".csv", ".tsv")
+
+    def dialect(self):
+        try:
+            return csv.Sniffer().sniff(self.sample_text(), delimiters=",;\t|")
+        except csv.Error:
+            return csv.excel
+
+    def rows(self):
+        dialect = self.dialect()
+        with self.open_text() as stream:
+            for row in csv.DictReader(stream, dialect=dialect):
                 yield row
