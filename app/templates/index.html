@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Research Search</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%238b5cf6'/%3E%3Ccircle cx='14' cy='14' r='6' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='M19 19l6 6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23020503'/%3E%3Ccircle cx='14' cy='14' r='6' fill='none' stroke='%2300ff66' stroke-width='3'/%3E%3Cpath d='M19 19l6 6' stroke='%2300ff66' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -127,6 +127,10 @@
           <form id="upload-form" class="inline">
             <input type="file" id="file" multiple required>
             <button type="submit" data-i18n="upload"></button>
+          </form>
+          <form id="url-form" class="inline">
+            <input type="text" id="url-input" data-i18n-ph="url_placeholder" autocomplete="off" required>
+            <button type="submit" data-i18n="url_btn"></button>
           </form>
           <p class="muted" data-i18n="inbox_hint"></p>
         </div>

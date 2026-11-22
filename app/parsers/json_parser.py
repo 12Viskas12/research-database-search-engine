@@ -1,7 +1,9 @@
 import json
 
-from app.parsers.base import BaseParser
-from app.parsers.utils import detect_encoding, read_text, scalar
+from app.parsers.text import CHUNK, TextParser
+from app.parsers.utils import scalar
+
+SPACE = " \t\r\n,"
 
 
 def flatten(value, prefix=""):
@@ -30,23 +32,80 @@ def records(data):
     return [data]
 
 
-class JsonParser(BaseParser):
-    def parse(self):
-        try:
-            data = json.loads(read_text(self.path))
-        except json.JSONDecodeError:
-            yield from self._lines()
-            return
-        for item in records(data):
-            yield flatten(item)
+class JsonParser(TextParser):
+    extensions = (".json", ".jsonl", ".ndjson")
 
-    def _lines(self):
-        with open(self.path, encoding=detect_encoding(self.path)) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
+    def rows(self):
+        decoder = json.JSONDecoder()
+        with self.open_text() as stream:
+            first = stream.read(CHUNK)
+            if first.lstrip().startswith("["):
+                yield from self.array(decoder, first, stream)
+            else:
+                yield from self.documents(first, stream)
+
+    def array(self, decoder, buffer, stream):
+        buffer = buffer.lstrip()[1:]
+        index, eof = 0, False
+        while True:
+            while True:
+                while index < len(buffer) and buffer[index] in SPACE:
+                    index += 1
+                if index < len(buffer):
+                    break
+                more = stream.read(CHUNK)
+                if not more:
+                    return
+                buffer, index = more, 0
+            if buffer[index] == "]":
+                return
+            while True:
                 try:
-                    yield flatten(json.loads(line))
+                    item, end = decoder.raw_decode(buffer, index)
+                    if eof or (end < len(buffer) and buffer[end] in SPACE + "]"):
+                        break
                 except json.JSONDecodeError:
-                    continue
+                    if eof:
+                        raise
+                more = stream.read(CHUNK)
+                if more:
+                    buffer = buffer[index:] + more
+                    index = 0
+                else:
+                    eof = True
+            yield flatten(item)
+            index = end
+            if index > CHUNK * 4:
+                buffer, index = buffer[index:], 0
+
+    def documents(self, first, stream):
+        lines = self.lines_of(first, stream)
+        head = next((x for x in lines if x.strip()), None)
+        if head is None:
+            return
+        try:
+            obj = json.loads(head)
+        except json.JSONDecodeError:
+            whole = head + "\n" + "\n".join(lines)
+            for item in records(json.loads(whole)):
+                yield flatten(item)
+            return
+        following = next((x for x in lines if x.strip()), None)
+        if following is None:
+            for item in records(obj):
+                yield flatten(item)
+            return
+        yield flatten(obj)
+        for line in self.chain(following, lines):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                yield flatten(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+
+    @staticmethod
+    def chain(first, rest):
+        yield first
+        yield from rest

@@ -9,7 +9,7 @@ import uuid
 from app.core.config import settings
 from app.db import database
 from app.parsers.factory import get_parser
-from app.services import audit_service
+from app.services import archive_service, audit_service, intake_service
 
 STABLE_SECONDS = 15
 SKIP_SUFFIX = (".part", ".tmp", ".crdownload", ".swp")
@@ -44,7 +44,7 @@ def candidates(base):
         yield entry.path, entry.name
 
 
-async def take(path, name):
+async def take(queue, path, name):
     sha = await asyncio.to_thread(file_hash, path)
     duplicate = await database.find_duplicate(sha)
     if duplicate:
@@ -53,6 +53,8 @@ async def take(path, name):
             None, "inbox_duplicate", name="inbox", file=name, same_as=duplicate["id"]
         )
         return None
+    if await asyncio.to_thread(archive_service.detect, path, name):
+        return await intake_service.register_archive(queue, path, name, sha)
     try:
         get_parser(path)
     except ValueError as e:
@@ -66,6 +68,7 @@ async def take(path, name):
     target = os.path.join(settings.upload_dir, f"{uuid.uuid4().hex}{ext}")
     await asyncio.to_thread(shutil.move, path, target)
     file_id = await database.create_file(name, target, sha)
+    await queue.enqueue_job("process_file", file_id)
     await audit_service.log(None, "inbox_file", name="inbox", file=file_id, source=name)
     return file_id
 
@@ -77,10 +80,9 @@ async def scan(queue):
     taken = []
     for path, name in await asyncio.to_thread(lambda: list(candidates(base))):
         try:
-            file_id = await take(path, name)
+            file_id = await take(queue, path, name)
         except OSError:
             continue
         if file_id is not None:
-            await queue.enqueue_job("process_file", file_id)
             taken.append(file_id)
     return taken

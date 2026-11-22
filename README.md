@@ -44,7 +44,7 @@ cd research-database-search-engine
 docker compose up --build
 ```
 
-Open [localhost:8000](http://localhost:8000). The first start creates an admin and prints the login:
+Open [localhost:8000](http://localhost:8000). The first start creates the creator account and prints the login:
 
 ```bash
 docker compose logs app | grep ADMIN
@@ -67,8 +67,8 @@ Settings are read from `.env`, see `.env.example`.
 | --- | --- | --- |
 | `BOT_TOKEN` | none | Telegram bot token, the bot is off without it |
 | `SITE_URL` | `http://localhost:8000` | Link the bot sends with the token |
-| `ADMIN_USERNAME` | `admin` | First admin login |
-| `ADMIN_PASSWORD` | random | First admin password, printed in the logs if empty |
+| `ADMIN_USERNAME` | `admin` | Login of the first account (the creator) |
+| `ADMIN_PASSWORD` | random | Password of the first account, printed in the logs if empty |
 | `QUOTA_USER` | `3` | Searches per month for the user role |
 | `QUOTA_VIP` | `50` | Searches per month for the vip role |
 | `DATABASE_URL` | `postgresql://postgres:postgres@db:5432/search` | PostgreSQL connection |
@@ -132,6 +132,8 @@ Pick a file in the dropdown to search inside it only. Matches are highlighted, i
 | Documents | `pdf` `docx` `html` `htm` |
 | Text | `txt` `log` `md` `dat` and any other text file |
 
+Archives (`zip` `7z` `tar` `tar.gz` `tgz` `tar.bz2` `tar.xz` `gz` `bz2` `xz`) are unpacked automatically, including archives inside archives, and every supported file inside is loaded as a separate file. This works for uploads, the inbox and links.
+
 SQL dumps are read from `INSERT` and `COPY` statements. Encodings like cp1251 are detected automatically.
 
 ---
@@ -150,6 +152,7 @@ curl -b jar -X POST localhost:8000/api/compress/reclaim
 - **Merge** many files into one packed file, each row keeps its `source_file`.
 - **Auto compression** packs files right after upload or after N days. The worker checks every 10 minutes. Set it in the Files tab.
 - **Inbox.** Put a file into the `inbox` folder next to `docker-compose.yml`. The worker checks it every minute, takes finished files, skips duplicates (moved to `inbox/_duplicates`) and unsupported types (moved to `inbox/_rejected`).
+- **Link.** An admin pastes a link in the Files tab, the worker downloads the file or archive itself and loads it. Local and private addresses are refused.
 - **Delete** removes a file with all its records, **Retry** reruns a failed file, a file with the same content is rejected as a duplicate.
 - If the worker restarts in the middle of a task, interrupted files are restarted or marked automatically.
 - **Reclaim** returns disk space after packing and briefly locks the tables.
@@ -176,10 +179,12 @@ Without the bot the admin creates tokens in the Tokens tab.
 | user | 3 | search |
 | vip | 50 | search |
 | admin | unlimited | everything: files, compression, requests, tokens, users, log |
+| creator | unlimited | the same as admin, plus managing admins |
 
 - The limit is per month and resets on the 1st at 00:00 UTC. Search and "I'm feeling lucky" both count.
 - VIP can have a term: 7, 30, 90, 365 days or forever. After that the account becomes a normal user.
 - Blocked users cannot log in or search, their sessions close at once. Admins cannot be blocked.
+- The first account is the creator. Only the creator can give or take the admin role, invite admins, or delete admins. Admins cannot change each other, and nobody can change the creator.
 - The **Stats** tab shows searches per day, top queries, active users and database size.
 - Ranks grow with every search: Rookie, Tracker, Sleuth, Detective, Sherlock.
 - Password change in the Profile tab closes other sessions. The admin can reset any password.
@@ -222,7 +227,8 @@ Admins with a linked Telegram get every new request in the chat with buttons: **
 | `GET` | `/api/history` | Search history |
 | `DELETE` | `/api/history` | Clear search history |
 | `GET` | `/api/lucky` | Random record |
-| `POST` | `/api/files` | Upload a file, admin |
+| `POST` | `/api/files` | Upload a file or archive, admin |
+| `POST` | `/api/files/url` | Download a file or archive from a link, admin |
 | `DELETE` | `/api/files/{id}` | Delete a file with its records, admin |
 | `POST` | `/api/files/{id}/retry` | Rerun a failed file, admin |
 | `GET` | `/api/files` | Files with status and progress, admin |

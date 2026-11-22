@@ -6,12 +6,13 @@ import uuid
 
 import aiofiles
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.deps import admin_user
 from app.core.redis_client import get_redis
 from app.db import database
-from app.services import archive_service, audit_service
+from app.services import archive_service, audit_service, download_service, intake_service
 from app.parsers.factory import get_parser
 
 router = APIRouter(prefix="/api/files", dependencies=[Depends(admin_user)])
@@ -30,59 +31,46 @@ async def upload(file: UploadFile = File(...), admin=Depends(admin_user)):
             digest.update(chunk)
             await out.write(chunk)
     sha = digest.hexdigest()
-    if archive_service.archive_kind(file.filename):
-        return await upload_archive(path, file.filename, admin)
     duplicate = await database.find_duplicate(sha)
     if duplicate:
         os.remove(path)
         raise HTTPException(
-            409, f"Такой файл уже загружен: {duplicate['name']} (id {duplicate['id']})"
+            409, f"This file is already uploaded: {duplicate['name']} (id {duplicate['id']})"
         )
+    redis = await get_redis()
+    if await asyncio.to_thread(archive_service.detect, path, file.filename or ""):
+        file_id = await intake_service.register_archive(redis, path, file.filename, sha)
+        await audit_service.log(admin, "archive_uploaded", file=file_id, name=file.filename)
+        return {"id": file_id, "status": "extracting"}
     try:
         get_parser(path)
     except ValueError as e:
         os.remove(path)
         raise HTTPException(400, str(e))
     file_id = await database.create_file(file.filename, path, sha)
-    redis = await get_redis()
     await redis.enqueue_job("process_file", file_id)
     await audit_service.log(admin, "file_uploaded", file=file_id, name=file.filename)
     return {"id": file_id, "status": "pending"}
 
 
-async def upload_archive(path, archive_name, admin):
+class UrlBody(BaseModel):
+    url: str
+
+
+@router.post("/url", status_code=202)
+async def from_url(body: UrlBody, admin=Depends(admin_user)):
+    url = body.url.strip()
     try:
-        try:
-            extracted, skipped = await asyncio.to_thread(
-                archive_service.extract, path, archive_name, settings.upload_dir
-            )
-        except archive_service.ArchiveError as e:
-            raise HTTPException(400, str(e))
-    finally:
-        os.remove(path)
-    created = []
+        await asyncio.to_thread(download_service.check_url, url)
+    except download_service.DownloadError as e:
+        raise HTTPException(400, str(e))
+    name = download_service.clean_name(os.path.basename(url.split("?")[0].rstrip("/")) or url)
+    file_id = await database.create_file(name, "")
+    await database.set_file_status(file_id, "downloading")
     redis = await get_redis()
-    for item in extracted:
-        duplicate = await database.find_duplicate(item["sha256"])
-        if duplicate:
-            os.remove(item["path"])
-            skipped.append(
-                {"name": item["name"], "reason": f"Уже загружен: {duplicate['name']}"}
-            )
-            continue
-        file_id = await database.create_file(item["name"], item["path"], item["sha256"])
-        await redis.enqueue_job("process_file", file_id)
-        await audit_service.log(
-            admin, "file_uploaded", file=file_id, name=item["name"], archive=archive_name
-        )
-        created.append({"id": file_id, "name": item["name"], "status": "pending"})
-    if not created:
-        raise HTTPException(
-            400,
-            "В архиве нет новых файлов поддерживаемых форматов"
-            + (f" (пропущено: {len(skipped)})" if skipped else ""),
-        )
-    return {"archive": archive_name, "files": created, "skipped": skipped}
+    await redis.enqueue_job("download_file", file_id, url)
+    await audit_service.log(admin, "file_url", file=file_id, url=url[:300])
+    return {"id": file_id, "status": "downloading"}
 
 
 @router.get("")
@@ -96,11 +84,16 @@ async def retry(file_id: int, admin=Depends(admin_user)):
     if record is None:
         raise HTTPException(404, "File not found")
     if record["status"] != "failed":
-        raise HTTPException(409, "Повторить можно только файл с ошибкой")
+        raise HTTPException(409, "Only a failed file can be retried")
     if not record["path"] or not os.path.exists(record["path"]):
-        raise HTTPException(400, "Исходный файл удален, загрузите его заново")
-    await database.set_file_status(file_id, "pending")
+        raise HTTPException(400, "The source file is gone, upload it again")
     redis = await get_redis()
+    if await asyncio.to_thread(archive_service.detect, record["path"], record["name"]):
+        await database.set_file_status(file_id, "extracting")
+        await redis.enqueue_job("expand_archive", file_id)
+        await audit_service.log(admin, "file_retry", file=file_id)
+        return {"id": file_id, "status": "extracting"}
+    await database.set_file_status(file_id, "pending")
     await redis.enqueue_job("process_file", file_id)
     await audit_service.log(admin, "file_retry", file=file_id)
     return {"id": file_id, "status": "pending"}
@@ -112,7 +105,7 @@ async def delete(file_id: int, admin=Depends(admin_user)):
     if record is None:
         raise HTTPException(404, "File not found")
     if record["status"] not in ("done", "failed"):
-        raise HTTPException(409, "Файл сейчас обрабатывается")
+        raise HTTPException(409, "The file is being processed now")
     await database.set_file_status(file_id, "deleting")
     redis = await get_redis()
     await redis.enqueue_job("delete_file", file_id)

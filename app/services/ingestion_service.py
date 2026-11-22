@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+from itertools import islice
 
 import pandas as pd
 
@@ -10,6 +11,9 @@ from app.services import normalize, vocab_service
 from app.services.cleaner import clean_dataframe
 
 BATCH = 5000
+CHUNK_ROWS = 50000
+SEEN_CAP = 2_000_000
+BYTES_PER_ROW = 60
 MIN_PER_WORKER = 25000
 RECHECK = 2
 INSERT = (
@@ -34,18 +38,54 @@ def _serialize(records):
 
 
 class Progress:
-    def __init__(self, file_id, total):
+    def __init__(self, file_id):
         self.file_id = file_id
-        self.total = max(1, total)
-        self.done = 0
         self.last = -1
 
-    async def add(self, count):
-        self.done += count
-        percent = min(99, self.done * 100 // self.total)
+    async def set(self, fraction):
+        percent = max(self.last, min(99, int(fraction * 100)))
         if percent != self.last:
             self.last = percent
             await database.set_file_progress(self.file_id, percent)
+
+
+class Source:
+    def __init__(self, file_id, parser):
+        self.file_id = file_id
+        self.parser = parser
+        self.rows = iter(parser.rows() if hasattr(parser, "rows") else parser)
+        self.seen = set()
+        self.lock = asyncio.Lock()
+        self.finished = False
+
+    def pull(self):
+        while True:
+            rows = list(islice(self.rows, CHUNK_ROWS))
+            if not rows:
+                return None
+            records = []
+            for record in _build(self.file_id, rows):
+                if len(self.seen) < SEEN_CAP:
+                    key = hash(record[2])
+                    if key in self.seen:
+                        continue
+                    self.seen.add(key)
+                records.append(record)
+            if records:
+                return records
+
+    async def next(self):
+        async with self.lock:
+            if self.finished:
+                return None
+            chunk = await asyncio.to_thread(self.pull)
+            if chunk is None:
+                self.finished = True
+            return chunk
+
+    @property
+    def fraction(self):
+        return getattr(self.parser, "progress", 0.0)
 
 
 def cpu_count():
@@ -89,42 +129,42 @@ async def _insert_batch(file_id, part):
             await conn.execute(INSERT, file_id, [r[0] for r in part], [r[1] for r in part])
 
 
-async def _worker(index, file_id, batches, progress, governor):
-    while batches:
+async def _worker(index, file_id, source, progress, governor, counter):
+    while not source.finished:
         if index >= await governor.allowed():
             await asyncio.sleep(0.5)
             continue
-        try:
-            part = batches.pop()
-        except IndexError:
+        chunk = await source.next()
+        if chunk is None:
             return
-        await _insert_batch(file_id, part)
-        await progress.add(len(part))
+        payload = await asyncio.to_thread(_serialize, chunk)
+        for i in range(0, len(payload), BATCH):
+            await _insert_batch(file_id, payload[i : i + BATCH])
+        counter[0] += len(chunk)
+        await vocab_service.add_texts([r[2] for r in chunk])
+        await progress.set(source.fraction)
 
 
-async def ingest(file_id, rows):
-    records = await asyncio.to_thread(_build, file_id, rows)
-    total = len(records)
+async def ingest(file_id, parser):
     pool = database.get_pool()
     await pool.execute("DELETE FROM records WHERE file_id = $1", file_id)
-    if total:
-        payload = await asyncio.to_thread(_serialize, records)
-        batches = [payload[i : i + BATCH] for i in range(0, total, BATCH)]
-        batches.reverse()
-        cap = max(1, getattr(settings, "ingest_workers_max", 8))
-        governor = Governor(total, cap)
-        progress = Progress(file_id, total)
-        tasks = [
-            asyncio.create_task(_worker(i, file_id, batches, progress, governor))
-            for i in range(cap)
-        ]
-        try:
-            await asyncio.gather(*tasks)
-        except BaseException:
-            for task in tasks:
-                task.cancel()
-            await asyncio.gather(*tasks, return_exceptions=True)
-            await pool.execute("DELETE FROM records WHERE file_id = $1", file_id)
-            raise
-    await vocab_service.add_texts([r[2] for r in records])
-    return total
+    source = Source(file_id, parser)
+    cap = max(1, getattr(settings, "ingest_workers_max", 8))
+    size = getattr(parser, "size", 0)
+    governor = Governor(max(1, size // BYTES_PER_ROW) if size else CHUNK_ROWS, cap)
+    progress = Progress(file_id)
+    counter = [0]
+    tasks = [
+        asyncio.create_task(_worker(i, file_id, source, progress, governor, counter))
+        for i in range(cap)
+    ]
+    try:
+        await asyncio.gather(*tasks)
+    except BaseException:
+        source.finished = True
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await pool.execute("DELETE FROM records WHERE file_id = $1", file_id)
+        raise
+    return counter[0]

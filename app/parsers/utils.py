@@ -1,31 +1,9 @@
-import codecs
 import csv
 import io
 import re
 
 DELIMITERS = ",;\t|"
 KEY_VALUE = re.compile(r"^\s*([^:=\n]{1,40}?)\s*[:=]\s*(.+?)\s*$")
-
-
-def detect_encoding(path):
-    with open(path, "rb") as f:
-        head = f.read(4)
-    if head.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
-        return "utf-16"
-    for enc in ("utf-8-sig", "cp1251"):
-        try:
-            with open(path, encoding=enc, newline="") as f:
-                while f.read(1 << 20):
-                    pass
-            return enc
-        except UnicodeDecodeError:
-            continue
-    return "latin-1"
-
-
-def read_text(path):
-    with open(path, encoding=detect_encoding(path), newline="") as f:
-        return f.read()
 
 
 def detect_delimiter(lines):

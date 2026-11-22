@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.db import database
 from app.services import auth_service
 from bot.handlers import request_keyboard, request_text, router, token_text
+from bot.texts import tr
 
 log = logging.getLogger("bot")
 
@@ -17,10 +18,13 @@ async def deliver(bot):
     while True:
         try:
             for item in await auth_service.deliveries():
+                lang = item.get("lang") or "uk"
                 if item["status"] == "approved":
-                    text = token_text(item["token"], item["role"], item["expires_at"], item["role_days"])
+                    text = token_text(
+                        lang, item["token"], item["role"], item["expires_at"], item["role_days"]
+                    )
                 else:
-                    text = "Заявка отклонена."
+                    text = tr(lang, "request_rejected")
                 try:
                     await bot.send_message(item["tg_id"], text)
                 except (TelegramForbiddenError, TelegramBadRequest):

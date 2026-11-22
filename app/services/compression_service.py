@@ -114,6 +114,11 @@ def bloom_all(bloom, terms):
 
 
 def bloom_accepts(bloom, spec):
+    if spec["mode"] == "anyall":
+        return any(
+            all(any(bloom_has(bloom, w) for w in group) for group in chain)
+            for chain in spec["sets"]
+        )
     groups = spec.get("groups")
     if spec["mode"] not in ("all", "min") or not groups:
         return True
@@ -170,6 +175,13 @@ def scan_block(payload, codec, spec):
                 found.append((i, row))
             continue
         present = words(text)
+        if mode == "anyall":
+            if any(
+                all(not present.isdisjoint(group) for group in chain)
+                for chain in spec["sets"]
+            ):
+                found.append((i, row))
+            continue
         hit = sum(1 for group in groups if not present.isdisjoint(group))
         enough = hit == len(groups) if mode == "all" else hit >= spec["min"]
         if enough:
