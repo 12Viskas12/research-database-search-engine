@@ -1,54 +1,75 @@
-import csv
-import itertools
-
-from app.parsers.text import TextParser
-from app.parsers.utils import KEY_VALUE, detect_delimiter
-
-HEAD_LINES = 200
+import duckdb
+from app.parsers.base import BaseParser
+from app.parsers.utils import KEY_VALUE, detect_delimiter, detect_encoding
 
 
-class TxtParser(TextParser):
-    extensions = (".txt", ".text", ".log", ".md", ".dat")
-
-    def rows(self):
-        with self.open_text() as stream:
-            buffered, head = [], []
-            for line in stream:
-                buffered.append(line)
-                if line.strip():
-                    head.append(line.rstrip("\r\n"))
-                if len(head) >= HEAD_LINES:
+class TxtParser(BaseParser):
+    def _inspect_mode(self):
+        enc = detect_encoding(self.path)
+        head = []
+        with open(self.path, encoding=enc, errors="replace") as f:
+            for _ in range(200):
+                line = f.readline()
+                if not line:
                     break
-            lines = itertools.chain(buffered, stream)
-            delimiter = detect_delimiter(head)
-            if delimiter:
-                yield from csv.DictReader(lines, delimiter=delimiter)
-            elif head and sum(1 for x in head if KEY_VALUE.match(x)) / len(head) >= 0.8:
-                yield from self.blocks(lines)
+                if line.strip():
+                    head.append(line)
+
+        delimiter = detect_delimiter(head)
+        if delimiter:
+            return "csv", delimiter
+        if head and sum(1 for x in head if KEY_VALUE.match(x)) / len(head) >= 0.8:
+            return "kv", enc
+        return "lines", enc
+
+    def to_postgres(self, ingestor, table_name: str, schema: str = "public"):
+        mode, param = self._inspect_mode()
+        if mode == "csv":
+            safe_path = self.path.replace("'", "''")
+            sep = param.replace("'", "''")
+            query = f"SELECT * FROM read_csv('{safe_path}', delim='{sep}', auto_detect=true, ignore_errors=true)"
+            ingestor.ingest_sql_query(query, table_name, schema)
+        else:
+            # Для Key-Value и сплошного текста работает потоковый fallback из BaseParser
+            super().to_postgres(ingestor, table_name, schema)
+
+    def parse(self):
+        mode, param = self._inspect_mode()
+        if mode == "csv":
+            safe_path = self.path.replace("'", "''")
+            sep = param.replace("'", "''")
+            con = duckdb.connect()
+            cursor = con.execute(f"SELECT * FROM read_csv('{safe_path}', delim='{sep}', auto_detect=true, ignore_errors=true)")
+            cols = [d[0] for d in cursor.description]
+            while rows := cursor.fetchmany(10_000):
+                for r in rows:
+                    yield dict(zip(cols, r))
+            con.close()
+            return
+
+        # Потоковое чтение без read_text() для гигантских логов и KV-файлов
+        with open(self.path, encoding=param, errors="replace") as f:
+            if mode == "kv":
+                yield from self._blocks(f)
             else:
-                yield from self.plain(lines)
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        yield {"text": line}
 
-    @staticmethod
-    def plain(lines):
-        for line in lines:
-            line = line.strip()
-            if line:
-                yield {"text": line}
-
-    @staticmethod
-    def blocks(lines):
-        record, last = {}, None
-        for line in lines:
-            line = line.rstrip("\r\n")
+    def _blocks(self, file_obj):
+        record = {}
+        last = None
+        for line in file_obj:
             if not line.strip():
                 if record:
                     yield record
                 record, last = {}, None
                 continue
-            match = KEY_VALUE.match(line)
-            if match:
-                last = match.group(1)
-                record[last] = match.group(2)
+            m = KEY_VALUE.match(line)
+            if m:
+                last = m.group(1)
+                record[last] = m.group(2)
             elif last:
                 record[last] = f"{record[last]} {line.strip()}"
             else:

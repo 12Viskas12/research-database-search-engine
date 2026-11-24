@@ -1,44 +1,44 @@
 import re
+from app.parsers.base import BaseParser
+from app.parsers.utils import detect_encoding
 
-from app.parsers.text import CHUNK, TextParser
+CREATE_RE = re.compile(r"CREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)\s*\(", re.I)
+INSERT_RE = re.compile(r"INSERT\s+(?:IGNORE\s+)?INTO\s+([^\s(]+)\s*(\([^)]*\))?\s*(?:VALUES|VALUE)\s*", re.I)
+COPY_RE = re.compile(r"COPY\s+([^\s(]+)\s*(\([^)]*\))?\s+FROM\s+stdin\s*;", re.I)
+STRING_RE = re.compile(r"(?:[NnEeBbXx]|_[A-Za-z0-9]+)?'((?:[^'\\]|\\.|'')*)'", re.S)
+ESCAPE_RE = re.compile(r"\\(.)|''", re.S)
 
-CREATE = re.compile(r"CREATE\s+(?:TEMP(?:ORARY)?\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([^\s(]+)\s*\(", re.I)
-INSERT = re.compile(
-    r"INSERT\s+(?:IGNORE\s+)?INTO\s+([^\s(]+)\s*(\([^)]*\))?\s*(?:VALUES|VALUE)(?=[\s(])\s*", re.I
-)
-COPY = re.compile(r"COPY\s+([^\s(]+)\s*(\([^)]*\))?\s+FROM\s+stdin\s*;[ \t]*\r?\n", re.I)
-HEAD = re.compile("(?P<create>" + CREATE.pattern + ")|(?P<insert>" + INSERT.pattern + ")|(?P<copy>" + COPY.pattern + ")", re.I)
-STRING = re.compile(r"(?:[NnEeBbXx]|_[A-Za-z0-9]+)?'((?:[^'\\]|\\.|'')*)'", re.S)
-ESCAPE = re.compile(r"\\(.)|''", re.S)
 ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "b": "\b", "Z": "\x1a"}
 NOT_COLUMNS = {
     "PRIMARY", "KEY", "UNIQUE", "CONSTRAINT", "FOREIGN", "INDEX",
     "FULLTEXT", "SPATIAL", "CHECK", "EXCLUDE", "LIKE",
 }
 SPACE = " \t\r\n"
-KEEP = 8192
-TRIM = 4 * 1024 * 1024
-SPLIT = re.compile(r";[ \t]*\r?\n")
-COPY_END = re.compile(r"^\\\.[ \t]*\r?$")
 
 
-def unquote(value):
-    return ESCAPE.sub(lambda m: "'" if m.group(0) == "''" else ESCAPES.get(m.group(1), m.group(1)), value)
+def unquote(value: str) -> str:
+    return ESCAPE_RE.sub(lambda m: "'" if m.group(0) == "''" else ESCAPES.get(m.group(1), m.group(1)), value)
 
 
-def clean_name(name):
+def clean_name(name: str) -> str:
     name = name.strip().rstrip(";")
     if "." in name and not name.startswith(("`", '"', "[")):
         name = name.rsplit(".", 1)[1]
     return name.strip('`"[]')
 
 
-def split_top(body):
+def copy_value(value: str):
+    if value == "\\N":
+        return None
+    return re.sub(r"\\(.)", lambda m: ESCAPES.get(m.group(1), m.group(1)), value)
+
+
+def split_top(body: str):
     parts, depth, start, i = [], 0, 0, 0
     while i < len(body):
         c = body[i]
         if c == "'":
-            m = STRING.match(body, i)
+            m = STRING_RE.match(body, i)
             i = m.end() if m else i + 1
             continue
         if c == "(":
@@ -53,12 +53,15 @@ def split_top(body):
     return parts
 
 
-def create_end(text, pos):
-    depth, i = 1, pos
-    while i < len(text) and depth:
-        c = text[i]
+def parse_create_columns(stmt: str):
+    m = CREATE_RE.search(stmt)
+    if not m:
+        return None, []
+    depth, i = 1, m.end()
+    while i < len(stmt) and depth:
+        c = stmt[i]
         if c == "'":
-            s = STRING.match(text, i)
+            s = STRING_RE.match(stmt, i)
             i = s.end() if s else i + 1
             continue
         if c == "(":
@@ -66,12 +69,8 @@ def create_end(text, pos):
         elif c == ")":
             depth -= 1
         i += 1
-    return i if depth == 0 else None
-
-
-def column_names(body):
     columns = []
-    for part in split_top(body):
+    for part in split_top(stmt[m.end():i - 1]):
         part = part.strip()
         if not part:
             continue
@@ -79,49 +78,32 @@ def column_names(body):
         if first.upper() in NOT_COLUMNS:
             continue
         columns.append(clean_name(first))
-    return columns
+    return clean_name(m.group(1)), columns
 
 
-def read_rows(text, pos, final):
+def read_insert_rows(text: str, pos: int):
     rows = []
     n = len(text)
     while True:
-        start = pos
         while pos < n and text[pos] in SPACE:
             pos += 1
-        if pos < n and text[pos] == ",":
-            pos += 1
-            continue
-        if pos >= n:
-            return rows, start, final
-        if text[pos] != "(":
-            return rows, pos, True
-        row_start = pos
+        if pos >= n or text[pos] != "(":
+            break
         pos += 1
         row = []
-        complete = True
         while True:
             while pos < n and text[pos] in SPACE:
                 pos += 1
-            m = STRING.match(text, pos)
-            if m and not final and (m.end() >= n or text[m.end()] == "'"):
-                complete = False
-                break
+            m = STRING_RE.match(text, pos)
             if m:
                 row.append(unquote(m.group(1)))
                 pos = m.end()
-            elif pos < n and text[pos] == "'" and not final:
-                complete = False
-                break
             else:
-                token_start, depth = pos, 0
+                start, depth = pos, 0
                 while pos < n:
                     c = text[pos]
                     if c == "'":
-                        s = STRING.match(text, pos)
-                        if not final and (s is None or s.end() >= n or text[s.end()] == "'"):
-                            complete = False
-                            break
+                        s = STRING_RE.match(text, pos)
                         pos = s.end() if s else pos + 1
                         continue
                     if c == "(":
@@ -133,178 +115,120 @@ def read_rows(text, pos, final):
                     elif c == "," and depth == 0:
                         break
                     pos += 1
-                if not complete or (pos >= n and not final):
-                    complete = False
-                    break
-                token = text[token_start:pos].strip()
+                token = text[start:pos].strip()
                 row.append(None if token.upper() == "NULL" else token)
             while pos < n and text[pos] in SPACE:
                 pos += 1
-            if pos >= n and not final:
-                complete = False
-                break
             if pos < n and text[pos] == ",":
                 pos += 1
                 continue
             if pos < n and text[pos] == ")":
                 pos += 1
             break
-        if not complete:
-            return rows, row_start, False
         rows.append(row)
-        after = pos
-        while after < n and text[after] in SPACE:
-            after += 1
-        if after >= n and not final:
-            return rows, pos, False
-        if after < n and text[after] == ",":
-            pos = after + 1
+        while pos < n and text[pos] in SPACE:
+            pos += 1
+        if pos < n and text[pos] == ",":
+            pos += 1
             continue
-        return rows, pos, True
+        break
+    return rows
 
 
-def copy_value(value):
-    if value == "\\N":
-        return None
-    return re.sub(r"\\(.)", lambda m: ESCAPES.get(m.group(1), m.group(1)), value)
+class SqlParser(BaseParser):
+    def _iter_statements(self):
+        """Потоково читает SQL-выражения до ';' вне строковых литералов и COPY-блоки."""
+        enc = detect_encoding(self.path)
+        with open(self.path, encoding=enc, errors="replace") as f:
+            in_copy = False
+            copy_meta = None
+            buf = []
+            in_string = False
+            escape_next = False
 
+            for line in f:
+                if in_copy:
+                    if line.rstrip("\r\n") == "\\.":
+                        in_copy = False
+                        copy_meta = None
+                    else:
+                        row = [copy_value(v) for v in line.rstrip("\r\n").split("\t")]
+                        yield ("copy_row", copy_meta, row)
+                    continue
 
-def make_record(columns, row, table, multi):
-    record = {}
-    if multi:
-        record["table"] = table
-    for i, value in enumerate(row):
-        record[columns[i] if i < len(columns) else f"col{i + 1}"] = value
-    return record
+                stripped = line.strip()
+                if not buf and (not stripped or stripped.startswith("--")):
+                    continue
 
+                buf.append(line)
+                # Проверяем окончание SQL-инструкции с учетом кавычек
+                for ch in line:
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if ch == "\\" and in_string:
+                        escape_next = True
+                        continue
+                    if ch == "'":
+                        in_string = not in_string
+                    elif ch == ";" and not in_string:
+                        stmt = "".join(buf).strip()
+                        buf.clear()
+                        m_copy = COPY_RE.match(stmt)
+                        if m_copy:
+                            in_copy = True
+                            table = clean_name(m_copy.group(1))
+                            cols_raw = m_copy.group(2)
+                            cols = [clean_name(c) for c in cols_raw.strip("()").split(",")] if cols_raw else None
+                            copy_meta = (table, cols)
+                        else:
+                            yield ("stmt", stmt, None)
+                        break
 
-class Window:
-    def __init__(self, stream):
-        self.stream = stream
-        self.text = ""
-        self.pos = 0
-        self.eof = False
+            if buf:
+                stmt = "".join(buf).strip()
+                if stmt and not stmt.startswith("--"):
+                    yield ("stmt", stmt, None)
 
-    def more(self):
-        chunk = self.stream.read(CHUNK)
-        if not chunk:
-            self.eof = True
-            return False
-        if self.pos > TRIM:
-            self.text = self.text[self.pos :]
-            self.pos = 0
-        self.text += chunk
-        return True
-
-
-class SqlParser(TextParser):
-    extensions = (".sql",)
-
-    def tables(self):
-        found, carry = set(), ""
-        with open(self.path, encoding=self.encoding, errors="replace", newline="") as f:
-            while len(found) < 2:
-                chunk = f.read(CHUNK)
-                if not chunk:
-                    break
-                text = carry + chunk
-                for m in INSERT.finditer(text):
-                    found.add(clean_name(m.group(1)))
-                for m in COPY.finditer(text):
-                    found.add(clean_name(m.group(1)))
-                carry = text[-KEEP:]
-        return found
-
-    def rows(self):
-        tables = self.tables()
-        if not tables:
-            yield from self.statements()
-            return
-        multi = len(tables) > 1
+    def parse(self):
         schemas = {}
-        with self.open_text() as stream:
-            window = Window(stream)
-            window.more()
-            while True:
-                m = HEAD.search(window.text, window.pos)
-                if m is None:
-                    if window.eof:
-                        return
-                    window.pos = max(window.pos, len(window.text) - KEEP)
-                    window.more()
-                    continue
-                if m.group("create"):
-                    end = create_end(window.text, m.end())
-                    while end is None and window.more():
-                        end = create_end(window.text, m.end())
-                    if end is None:
-                        end = len(window.text)
-                    schemas[clean_name(m.group(2))] = column_names(window.text[m.end() : end - 1])
-                    window.pos = end
-                elif m.group("insert"):
-                    table = clean_name(m.group(4))
-                    columns = self.columns(m.group(5), schemas.get(table, []))
-                    window.pos = m.end()
-                    for row in self.insert_rows(window):
-                        yield make_record(columns, row, table, multi)
-                else:
-                    table = clean_name(m.group(7))
-                    columns = self.columns(m.group(8), schemas.get(table, []))
-                    window.pos = m.end()
-                    for row in self.copy_rows(window):
-                        yield make_record(columns, row, table, multi)
+        seen_tables = set()
+        found_data = False
 
-    @staticmethod
-    def columns(raw, fallback):
-        if raw:
-            return [clean_name(c) for c in raw.strip("()").split(",")]
-        return fallback
+        for kind, payload, extra in self._iter_statements():
+            if kind == "copy_row":
+                found_data = True
+                table, cols_override = payload
+                seen_tables.add(table)
+                columns = cols_override if cols_override is not None else schemas.get(table, [])
+                record = {"_source_table": table}
+                for i, val in enumerate(extra):
+                    record[columns[i] if i < len(columns) else f"col{i + 1}"] = val
+                yield record
+                continue
 
-    @staticmethod
-    def insert_rows(window):
-        while True:
-            rows, pos, done = read_rows(window.text, window.pos, window.eof)
-            window.pos = pos
-            yield from rows
-            if done:
-                return
-            if not window.more():
-                rows, pos, _ = read_rows(window.text, window.pos, True)
-                window.pos = pos
-                yield from rows
-                return
+            stmt = payload
+            if CREATE_RE.match(stmt):
+                tbl, cols = parse_create_columns(stmt)
+                if tbl:
+                    schemas[tbl] = cols
+                continue
 
-    @staticmethod
-    def copy_rows(window):
-        while True:
-            newline = window.text.find("\n", window.pos)
-            if newline == -1:
-                if window.more():
-                    continue
-                line, window.pos = window.text[window.pos :], len(window.text)
-                if line and not COPY_END.match(line):
-                    yield [copy_value(v) for v in line.split("\t")]
-                return
-            line = window.text[window.pos : newline]
-            window.pos = newline + 1
-            if COPY_END.match(line):
-                return
-            line = line.rstrip("\r")
-            if line:
-                yield [copy_value(v) for v in line.split("\t")]
+            m_ins = INSERT_RE.match(stmt)
+            if m_ins:
+                found_data = True
+                table = clean_name(m_ins.group(1))
+                seen_tables.add(table)
+                cols_raw = m_ins.group(2)
+                columns = [clean_name(c) for c in cols_raw.strip("()").split(",")] if cols_raw else schemas.get(table, [])
+                rows = read_insert_rows(stmt, m_ins.end())
+                for row in rows:
+                    record = {"_source_table": table}
+                    for i, val in enumerate(row):
+                        record[columns[i] if i < len(columns) else f"col{i + 1}"] = val
+                    yield record
 
-    def statements(self):
-        self.consumed = 0
-        with self.open_text() as stream:
-            pending = ""
-            while True:
-                chunk = stream.read(CHUNK)
-                pending += chunk
-                parts = SPLIT.split(pending)
-                pending = parts.pop() if chunk else ""
-                for statement in parts:
-                    statement = statement.strip()
-                    if statement and not statement.startswith("--"):
-                        yield {"statement": statement}
-                if not chunk:
-                    return
+        if not found_data:
+            for kind, payload, _ in self._iter_statements():
+                if kind == "stmt":
+                    yield {"statement": payload}

@@ -1,7 +1,6 @@
-import xml.etree.ElementTree as ET
 import zipfile
-
-from app.parsers.base import TableParser
+import xml.etree.ElementTree as ET
+from app.parsers.base import BaseParser
 
 NS = {
     "table": "urn:oasis:names:tc:opendocument:xmlns:table:1.0",
@@ -30,31 +29,26 @@ def row_values(row):
     return values
 
 
-class OdsParser(TableParser):
-    extensions = (".ods",)
-
-    def rows(self):
+class OdsParser(BaseParser):
+    def parse(self):
         with zipfile.ZipFile(self.path) as z:
-            total = max(1, z.getinfo("content.xml").file_size)
-            with z.open("content.xml") as stream:
-                header, seen = None, 0
-                for event, element in ET.iterparse(stream, events=("start", "end")):
-                    if event == "start":
-                        if element.tag == f"{T}table":
-                            header = None
-                        continue
-                    if element.tag != f"{T}table-row":
-                        continue
-                    seen += 1
-                    if seen % 500 == 0:
-                        self.fraction = min(0.99, stream.tell() / total)
-                    values = row_values(element)
-                    if any(values):
-                        if header is None:
-                            header = self.header_of(values)
-                        else:
-                            repeat = min(int(element.get(f"{T}number-rows-repeated", "1")), MAX_REPEAT)
-                            record = self.record_of(header, values)
-                            for _ in range(repeat):
-                                yield dict(record)
-                    element.clear()
+            with z.open("content.xml") as f:
+                header = None
+                for event, elem in ET.iterparse(f, events=("end",)):
+                    if elem.tag == f"{T}table":
+                        header = None
+                        elem.clear()
+                    elif elem.tag == f"{T}table-row":
+                        values = row_values(elem)
+                        if any(values):
+                            if header is None:
+                                header = [h or f"col{i + 1}" for i, h in enumerate(values)]
+                            else:
+                                repeat = min(int(elem.get(f"{T}number-rows-repeated", "1")), MAX_REPEAT)
+                                record = {
+                                    (header[i] if i < len(header) else f"col{i + 1}"): v
+                                    for i, v in enumerate(values)
+                                }
+                                for _ in range(repeat):
+                                    yield dict(record)
+                        elem.clear()

@@ -1,22 +1,21 @@
-import csv
-import sys
-
-from app.parsers.text import TextParser
-
-csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
+import duckdb
+from app.parsers.base import BaseParser
 
 
-class CsvParser(TextParser):
-    extensions = (".csv", ".tsv")
+class JsonParser(BaseParser):
+    def _query(self) -> str:
+        safe_path = self.path.replace("'", "''")
+        # format='auto' сам понимает как обычный JSON-массив, так и NDJSON/JSONL
+        return f"SELECT * FROM read_json_auto('{safe_path}', maximum_object_size=104857600, ignore_errors=true)"
 
-    def dialect(self):
-        try:
-            return csv.Sniffer().sniff(self.sample_text(), delimiters=",;\t|")
-        except csv.Error:
-            return csv.excel
+    def to_postgres(self, ingestor, table_name: str, schema: str = "public"):
+        ingestor.ingest_sql_query(self._query(), table_name, schema)
 
-    def rows(self):
-        dialect = self.dialect()
-        with self.open_text() as stream:
-            for row in csv.DictReader(stream, dialect=dialect):
-                yield row
+    def parse(self):
+        con = duckdb.connect()
+        cursor = con.execute(self._query())
+        cols = [d[0] for d in cursor.description]
+        while rows := cursor.fetchmany(10_000):
+            for r in rows:
+                yield dict(zip(cols, r))
+        con.close()

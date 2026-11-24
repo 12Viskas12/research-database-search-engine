@@ -1,48 +1,40 @@
-import os
-from abc import ABC, abstractmethod
-
-
-class BaseParser(ABC):
-    extensions = ()
-    registry = {}
-
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-        for extension in cls.extensions:
-            BaseParser.registry[extension] = cls
-
-    def __init__(self, path):
+class BaseParser:
+    def __init__(self, path: str):
         self.path = path
-        self.size = max(1, os.path.getsize(path))
-        self.consumed = 0
-        self.fraction = 0.0
-
-    @abstractmethod
-    def rows(self):
-        raise NotImplementedError
 
     def parse(self):
-        return self.rows()
+        """Медленный режим обратной совместимости (построчный yield dict)."""
+        raise NotImplementedError
 
-    @property
-    def progress(self):
-        if self.fraction:
-            return min(1.0, self.fraction)
-        return min(1.0, self.consumed / self.size)
+    def to_postgres(self, ingestor, table_name: str, schema: str = "public"):
+        """Быстрый режим заливки в БД. Переопределяется в DuckDB-парсерах."""
+        # Fallback для Python-парсеров (PDF, DOCX, HTML): собираем чанками и льем через pyarrow -> DuckDB -> Postgres
+        import pyarrow as pa
 
-    @classmethod
-    def supports(cls, extension):
-        return extension.lower() in cls.registry
+        batch = []
+        batch_size = 50_000
+        con = ingestor._connect()
+        created = False
 
+        try:
+            for record in self.parse():
+                batch.append(record)
+                if len(batch) >= batch_size:
+                    arrow_tbl = pa.Table.from_pylist(batch)
+                    con.register("tmp_batch", arrow_tbl)
+                    if not created:
+                        con.execute(f'CREATE TABLE IF NOT EXISTS pg_db.{schema}."{table_name}" AS SELECT * FROM tmp_batch LIMIT 0;')
+                        created = True
+                    con.execute(f'INSERT INTO pg_db.{schema}."{table_name}" SELECT * FROM tmp_batch;')
+                    con.unregister("tmp_batch")
+                    batch.clear()
 
-class TableParser(BaseParser):
-    @staticmethod
-    def header_of(values):
-        return [str(h).strip() if h is not None and str(h).strip() else f"col{i + 1}" for i, h in enumerate(values)]
-
-    @staticmethod
-    def record_of(header, values):
-        return {
-            (header[i] if i < len(header) else f"col{i + 1}"): v
-            for i, v in enumerate(values)
-        }
+            if batch:
+                arrow_tbl = pa.Table.from_pylist(batch)
+                con.register("tmp_batch", arrow_tbl)
+                if not created:
+                    con.execute(f'CREATE TABLE IF NOT EXISTS pg_db.{schema}."{table_name}" AS SELECT * FROM tmp_batch LIMIT 0;')
+                con.execute(f'INSERT INTO pg_db.{schema}."{table_name}" SELECT * FROM tmp_batch;')
+                con.unregister("tmp_batch")
+        finally:
+            con.close()

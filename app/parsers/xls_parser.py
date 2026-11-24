@@ -1,37 +1,39 @@
-from app.parsers.base import TableParser
+import duckdb
+from app.parsers.base import BaseParser
 
 
-class XlsParser(TableParser):
-    extensions = (".xls",)
+class XlsParser(BaseParser):
+    def to_postgres(self, ingestor, table_name: str, schema: str = "public"):
+        con = ingestor._connect()
+        safe_path = self.path.replace("'", "''")
+        try:
+            con.execute("INSTALL spatial; LOAD spatial;")
+            q = f"SELECT * FROM st_read('{safe_path}')"
+            con.execute(f'CREATE TABLE IF NOT EXISTS pg_db.{schema}."{table_name}" AS SELECT * FROM ({q}) LIMIT 0;')
+            con.execute(f'INSERT INTO pg_db.{schema}."{table_name}" {q};')
+        except Exception:
+            super().to_postgres(ingestor, table_name, schema)
+        finally:
+            con.close()
 
-    def rows(self):
+    def parse(self):
         import xlrd
 
-        workbook = xlrd.open_workbook(self.path, on_demand=True)
-        try:
-            sheets = [s for s in workbook.sheets() if s.nrows >= 1]
-            for number, sheet in enumerate(sheets):
-                header = self.header_of(sheet.row_values(0))
-                for index in range(1, sheet.nrows):
-                    if index % 2000 == 0:
-                        self.fraction = (number + index / sheet.nrows) / len(sheets)
-                    values = [self.value(xlrd, workbook, c) for c in sheet.row(index)]
-                    yield self.record_of(header, values)
-                workbook.unload_sheet(sheet.name)
-        finally:
-            workbook.release_resources()
-
-    @staticmethod
-    def value(xlrd, workbook, cell):
-        if cell.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
-            return None
-        if cell.ctype == xlrd.XL_CELL_DATE:
-            try:
-                return xlrd.xldate_as_datetime(cell.value, workbook.datemode).isoformat()
-            except Exception:
-                return str(cell.value)
-        if cell.ctype == xlrd.XL_CELL_NUMBER and float(cell.value).is_integer():
-            return int(cell.value)
-        if cell.ctype == xlrd.XL_CELL_BOOLEAN:
-            return "true" if cell.value else "false"
-        return cell.value
+        wb = xlrd.open_workbook(self.path, on_demand=True)
+        for sheet_idx in range(wb.nsheets):
+            sheet = wb.sheet_by_index(sheet_idx)
+            if sheet.nrows < 2:
+                continue
+            header = [
+                str(sheet.cell_value(0, c)).strip() or f"col{c + 1}"
+                for c in range(sheet.ncols)
+            ]
+            for r in range(1, sheet.nrows):
+                row_vals = [sheet.cell_value(r, c) for c in range(sheet.ncols)]
+                if not any(v != "" for v in row_vals):
+                    continue
+                yield {
+                    header[c]: ("" if row_vals[c] is None else str(row_vals[c]))
+                    for c in range(sheet.ncols)
+                }
+            wb.unload_sheet(sheet_idx)
