@@ -42,6 +42,7 @@ services:
       - "8000:8000"
     volumes:
       - uploads:/data/uploads
+      - backups:/backups
     depends_on:
       db:
         condition: service_healthy
@@ -64,6 +65,7 @@ services:
         required: false
     volumes:
       - uploads:/data/uploads
+      - ./inbox:/data/inbox
     depends_on:
       db:
         condition: service_healthy
@@ -89,6 +91,42 @@ services:
       db:
         condition: service_healthy
 
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=30d
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - app
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/viskas.json
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafdata:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
   backup:
     image: postgres:16
     command: ["sh", "/scripts/backup.sh"]
@@ -110,3 +148,5 @@ volumes:
   pgdata:
   uploads:
   backups:
+  promdata:
+  grafdata:

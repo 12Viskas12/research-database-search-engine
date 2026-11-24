@@ -2,7 +2,7 @@ LANGS = ("uk", "en")
 
 T = {
     "uk": {
-        "roles": {"user": "звичайний", "vip": "VIP", "admin": "адмін"},
+        "roles": {"user": "звичайний", "vip": "VIP", "admin": "адмін", "creator": "творець"},
         "quota_unlimited": "Запитів: без обмежень",
         "quota": "Залишилось запитів цього місяця: {remaining} з {limit}",
         "start": (
@@ -56,7 +56,7 @@ T = {
         },
     },
     "en": {
-        "roles": {"user": "regular", "vip": "VIP", "admin": "admin"},
+        "roles": {"user": "regular", "vip": "VIP", "admin": "admin", "creator": "creator"},
         "quota_unlimited": "Searches: unlimited",
         "quota": "Searches left this month: {remaining} of {limit}",
         "start": (

@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 
-const BUSY = ["processing", "packing", "unpacking", "deleting"];
+const BUSY = ["processing", "packing", "unpacking", "deleting", "downloading", "extracting"];
 const TABS = [
   { id: "search" },
   { id: "history" },
@@ -115,7 +115,7 @@ function showAuth() {
 
 function renderNav() {
   const nav = $("nav");
-  const tabs = TABS.filter((x) => !x.admin || me.role === "admin");
+  const tabs = TABS.filter((x) => !x.admin || isStaff());
   const nodes = [];
   let divider = false;
   for (const item of tabs) {
@@ -135,11 +135,17 @@ function showApp() {
   $("auth").hidden = true;
   $("app").hidden = false;
   $("me").hidden = false;
-  $("hidden-box").hidden = me.role !== "admin";
+  $("hidden-box").hidden = !isStaff();
+  const adminOption = $("invite-role").querySelector('option[value="admin"]');
+  if (adminOption) { adminOption.hidden = me.role !== "creator"; adminOption.disabled = me.role !== "creator"; }
   tab = "search";
   renderMe();
   renderNav();
   switchTab("search");
+}
+
+function isStaff() {
+  return !!me && (me.role === "admin" || me.role === "creator");
 }
 
 function roleName(role) {
@@ -333,7 +339,7 @@ function afterRecordChange(group, rec, removed) {
 
 function recordActions(rec) {
   const bar = el("div", "rec-actions");
-  if (!me || me.role !== "admin") return bar;
+  if (!me || !isStaff()) return bar;
   if (typeof rec.id !== "number") {
     bar.append(el("span", "muted-inline", t("packed_note")));
     return bar;
@@ -516,7 +522,7 @@ function takeFresh(data) {
 }
 
 async function startSearch(q, files) {
-  const hidden = me.role === "admin" && $("show-hidden").checked;
+  const hidden = isStaff() && $("show-hidden").checked;
   const next = { q, files, hidden, offset: 0, searchId: null, marks: [], items: [], more: false, seen: new Set() };
   await runSearch(searchUrl(next), (data) => {
     current = next;
@@ -903,6 +909,19 @@ $("upload-form").addEventListener("submit", async (e) => {
   toast(failed.length ? `${failed[0]}${more}` : t("upload_done", { ok: done, total: list.length }));
 });
 
+$("url-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = $("url-input");
+  const url = input.value.trim();
+  if (!url) return;
+  const ok = await act("/api/files/url", { method: "POST", json: { url } });
+  if (ok) {
+    input.value = "";
+    toast(t("url_started"));
+  }
+  loadFiles();
+});
+
 $("merge-all").addEventListener("click", () => {
   if (!confirm(t("merge_q"))) return;
   act("/api/compress/merge", { method: "POST", json: {} }, loadFiles);
@@ -1044,13 +1063,17 @@ async function loadUsers() {
       );
       const side = el("div", "item-side");
       const select = el("select");
-      for (const value of ["user", "vip", "admin"]) {
+      const staff = u.role === "admin" || u.role === "creator";
+      const locked = own || u.role === "creator" || (staff && me.role !== "creator");
+      const choices = me.role === "creator" ? ["user", "vip", "admin"] : ["user", "vip"];
+      if (u.role === "creator") choices.push("creator");
+      for (const value of choices) {
         const option = el("option", "", roleName(value));
         option.value = value;
         option.selected = value === u.role;
         select.append(option);
       }
-      select.disabled = own;
+      select.disabled = locked;
       select.addEventListener("change", async () => {
         let n = null;
         if (select.value === "vip") {
@@ -1085,7 +1108,7 @@ async function loadUsers() {
           if (data) prompt(t("new_password_show"), data.password);
         })
       );
-      if (!own && u.role !== "admin") {
+      if (!locked && !staff) {
         side.append(
           button(t(u.blocked ? "unblock" : "block"), "mini", async () => {
             if (!u.blocked && !confirm(t("block_q", { name: u.username }))) return;
@@ -1097,7 +1120,7 @@ async function loadUsers() {
           })
         );
       }
-      if (!own) {
+      if (!locked) {
         side.append(
           button(t("delete"), "mini danger", () => {
             if (confirm(t("delete_user_q", { name: u.username }))) {
